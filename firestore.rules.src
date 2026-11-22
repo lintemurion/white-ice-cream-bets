@@ -279,8 +279,9 @@ service cloud.firestore {
       // Propose. Side A is the creator. Anonymous bets create their zero tally in this batch.
       allow create: if isMember() && proposing();
 
-      // One named predicate per transition. Later tasks add voting, settle and paid here.
-      allow update: if isMember() && (accepting() || callingIt());
+      // One named predicate per transition. The admin's mark paid is his blanket update.
+      allow update: if isMember()
+        && (accepting() || callingIt() || votingOpen() || settlingOpen() || markingPaid());
 
       // Decline (side B) or cancel (side A) while proposed. An anonymous bet's tally goes
       // in the same batch, so no orphan tally is left behind.
@@ -339,6 +340,45 @@ service cloud.firestore {
         return onlyChanges(['status'])
           && resource.data.status == 'active'
           && request.resource.data.status == 'voting';
+      }
+
+      // Open vote: the voter adds, moves, or removes only her own key, ends up in at most
+      // one map, and her value is exactly true. Bettors and the subject may vote.
+      function votingOpen() {
+        let me = request.auth.uid;
+        let a = request.resource.data.votesA;
+        let b = request.resource.data.votesB;
+        return resource.data.voteStyle == 'open'
+          && resource.data.status == 'voting'
+          && onlyChanges(['votesA', 'votesB'])
+          && a is map
+          && b is map
+          && a.diff(resource.data.votesA).affectedKeys().hasOnly([me])
+          && b.diff(resource.data.votesB).affectedKeys().hasOnly([me])
+          && !(me in a && me in b)
+          && (!(me in a) || a[me] == true)
+          && (!(me in b) || b[me] == true);
+      }
+
+      // Any member settles an open bet: voting -> settled with a strict majority for the
+      // winner against the live member count. Only status and winner change.
+      function settlingOpen() {
+        let d = request.resource.data;
+        return resource.data.voteStyle == 'open'
+          && resource.data.status == 'voting'
+          && onlyChanges(['status', 'winner'])
+          && d.status == 'settled'
+          && ((d.winner == 'A' && resource.data.votesA.size() * 2 > memberCount())
+            || (d.winner == 'B' && resource.data.votesB.size() * 2 > memberCount()));
+      }
+
+      // The winner marks it paid: settled -> paid, nothing else changes.
+      function markingPaid() {
+        return onlyChanges(['status'])
+          && resource.data.status == 'settled'
+          && request.resource.data.status == 'paid'
+          && ((resource.data.winner == 'A' && isSelf(resource.data.sideA))
+            || (resource.data.winner == 'B' && isSelf(resource.data.sideB)));
       }
 
       match /ballots/{v} {
