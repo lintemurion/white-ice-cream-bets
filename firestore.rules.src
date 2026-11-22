@@ -43,50 +43,219 @@ service cloud.firestore {
     }
 
     function memberCount() {
-      return get(/databases/$(database)/documents/group/main).data.memberCount;
+      return get(groupPath()).data.memberCount;
+    }
+
+    function groupPath() {
+      return /databases/$(database)/documents/group/main;
+    }
+
+    function joinPath(uid) {
+      return /databases/$(database)/documents/joinRequests/$(uid);
+    }
+
+    function tallyPath(uid) {
+      return /databases/$(database)/documents/joinRequests/$(uid)/tally/counts;
+    }
+
+    function ballotPath(uid, v) {
+      return /databases/$(database)/documents/joinRequests/$(uid)/ballots/$(v);
+    }
+
+    function votersPath(uid, v) {
+      return /databases/$(database)/documents/joinRequests/$(uid)/voters/$(v);
+    }
+
+    // The update touches only these fields.
+    function onlyChanges(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
+    }
+
+    // The new doc has exactly these fields.
+    function hasExactly(keys) {
+      return request.resource.data.keys().hasAll(keys)
+        && request.resource.data.keys().hasOnly(keys);
+    }
+
+    // Trimmed, 1 to 30 chars. The client trims before writing.
+    function validName(n) {
+      return n is string && n == n.trim() && n.size() >= 1 && n.size() <= 30;
+    }
+
+    // True when doc `path` is created by this same batch.
+    function createdNow(path) {
+      return !exists(path) && existsAfter(path);
     }
 
     // ---------- Group ----------
 
     // Holds only a count and a uid; the pending waiting screen needs memberCount.
+    // Members may only admit: +1 and lastAdmitted moves to a uid that goes pending -> member
+    // in this same batch. The users rule only lets a member promote with an approved
+    // request and this exact +1, so memberCount stays honest.
     match /group/main {
-      allow read: if isMember() || isAdmin() || isPending();
+      allow read: if isAdmin() || isPending() || isMember();
       allow write: if isAdmin();
+      allow update: if isMember()
+        && onlyChanges(['memberCount', 'lastAdmitted'])
+        && request.resource.data.memberCount == resource.data.memberCount + 1
+        && request.resource.data.lastAdmitted is string
+        && hasStatus(request.resource.data.lastAdmitted, 'pending')
+        && getAfter(userPath(request.resource.data.lastAdmitted)).data.status == 'member';
     }
 
     // ---------- Users ----------
 
     match /users/{uid} {
-      allow read: if isMember() || isAdmin() || isSelf(uid);
-      allow write: if isAdmin();
+      allow read: if isAdmin() || isSelf(uid) || isMember();
+      // The admin's blanket write skips the admin's own uid, so the admin can never be voted in.
+      allow write: if isAdmin() && !isSelf(uid);
+
+      // Request to join, step 1 of 3 (with joinRequests/{uid} and its tally).
+      allow create: if isSelf(uid) && !isAdmin()
+        && hasExactly(['status', 'displayName', 'createdAt'])
+        && request.resource.data.status == 'pending'
+        && validName(request.resource.data.displayName)
+        && request.resource.data.createdAt == request.time
+        && createdNow(joinPath(uid));
+
+      allow update: if
+        // Display name: pending user or member edits only her own name.
+        (isSelf(uid)
+          && resource.data.status in ['pending', 'member']
+          && onlyChanges(['displayName'])
+          && validName(request.resource.data.displayName))
+        // Approve: pending -> member alongside the request going open -> approved and
+        // group/main gaining exactly one member, recorded as this uid.
+        || (isMember()
+          && onlyChanges(['status'])
+          && resource.data.status == 'pending'
+          && request.resource.data.status == 'member'
+          && get(joinPath(uid)).data.status == 'open'
+          && getAfter(joinPath(uid)).data.status == 'approved'
+          && getAfter(groupPath()).data.memberCount == memberCount() + 1
+          && getAfter(groupPath()).data.lastAdmitted == uid)
+        // Reject: pending -> rejected alongside the request going open -> rejected.
+        || (isMember()
+          && onlyChanges(['status'])
+          && resource.data.status == 'pending'
+          && request.resource.data.status == 'rejected'
+          && get(joinPath(uid)).data.status == 'open'
+          && getAfter(joinPath(uid)).data.status == 'rejected');
     }
 
     // ---------- Join requests ----------
 
+    // The admin's blanket write skips the admin's own uid, so the admin cannot open a request.
     match /joinRequests/{uid} {
-      allow read: if isMember() || isAdmin() || isSelf(uid);
-      allow write: if isAdmin();
+      allow read: if isAdmin() || isSelf(uid) || isMember();
+      allow write: if isAdmin() && !isSelf(uid);
 
+      // Request to join, step 2 of 3. Denied once users/{uid} exists (rejected, former...).
+      allow create: if isSelf(uid) && !isAdmin()
+        && hasExactly(['displayName', 'status', 'voterCount', 'createdAt'])
+        && request.resource.data.status == 'open'
+        && request.resource.data.voterCount == 0
+        && request.resource.data.createdAt == request.time
+        && !exists(userPath(uid))
+        && getAfter(userPath(uid)).data.status == 'pending'
+        && getAfter(userPath(uid)).data.displayName == request.resource.data.displayName
+        && existsAfter(tallyPath(uid));
+
+      allow update: if resource.data.status == 'open' && (
+        // New vote: +1 alongside this voter's voters doc being created (whose rule in
+        // turn requires the ballot, whose rule checks the tally and membership).
+        (onlyChanges(['voterCount'])
+          && request.resource.data.voterCount == resource.data.voterCount + 1
+          && createdNow(votersPath(uid, request.auth.uid)))
+        // Approve: strict yes majority of members before admission.
+        || (isMember()
+          && onlyChanges(['status'])
+          && request.resource.data.status == 'approved'
+          && get(tallyPath(uid)).data.yes * 2 > memberCount()
+          && getAfter(userPath(uid)).data.status == 'member')
+        // Reject: strict no majority.
+        || (isMember()
+          && onlyChanges(['status'])
+          && request.resource.data.status == 'rejected'
+          && get(tallyPath(uid)).data.no * 2 > memberCount()
+          && getAfter(userPath(uid)).data.status == 'rejected'));
+
+      // Who voted. Members only, never the applicant.
       match /voters/{v} {
-        allow read: if isMember() || isAdmin();
-        allow write: if isAdmin();
+        allow read: if isAdmin() || (!isSelf(uid) && isMember());
+        allow write: if isAdmin() && !isSelf(uid) && !isSelf(v);
+        allow create: if isSelf(v)
+          && request.resource.data.keys().size() == 0
+          && createdNow(ballotPath(uid, v));
       }
 
+      // One ballot per member, id = her uid. Only she (and the admin) can read it.
       match /ballots/{v} {
-        allow read: if isAdmin() || isSelf(v);
-        allow write: if isAdmin();
+        allow read: if isAdmin() || (isSelf(v) && !isSelf(uid));
+        // The admin cannot vote, so no admin write to a ballot under the admin's own uid.
+        allow write: if isAdmin() && !isSelf(uid) && !isSelf(v);
+
+        // New vote: ballot + voters doc + voterCount +1 + chosen tally field +1.
+        allow create: if isSelf(v) && isMember()
+          && hasExactly(['choice'])
+          && request.resource.data.choice in ['yes', 'no']
+          && get(joinPath(uid)).data.status == 'open'
+          && getAfter(joinPath(uid)).data.voterCount == get(joinPath(uid)).data.voterCount + 1
+          && existsAfter(votersPath(uid, v))
+          && getAfter(tallyPath(uid)).data[request.resource.data.choice]
+             == get(tallyPath(uid)).data[request.resource.data.choice] + 1;
+
+        // Changed vote: old choice -1, new choice +1 (the tally rule pins the rest).
+        allow update: if isSelf(v) && isMember()
+          && onlyChanges(['choice'])
+          && request.resource.data.choice in ['yes', 'no']
+          && request.resource.data.choice != resource.data.choice
+          && get(joinPath(uid)).data.status == 'open'
+          && getAfter(tallyPath(uid)).data[request.resource.data.choice]
+             == get(tallyPath(uid)).data[request.resource.data.choice] + 1
+          && getAfter(tallyPath(uid)).data[resource.data.choice]
+             == get(tallyPath(uid)).data[resource.data.choice] - 1;
       }
 
+      // Hidden until decided or everyone has voted; never shown to the applicant.
       match /tally/counts {
-        allow read: if isAdmin();
-        allow write: if isAdmin();
+        allow read: if isAdmin() || (!isSelf(uid) && isMember() && (
+          get(joinPath(uid)).data.status != 'open'
+          || get(joinPath(uid)).data.voterCount == memberCount()));
+        allow write: if isAdmin() && !isSelf(uid);
+
+        // Request to join, step 3 of 3.
+        allow create: if isSelf(uid) && !isAdmin()
+          && request.resource.data == {'yes': 0, 'no': 0}
+          && createdNow(joinPath(uid));
+
+        // A vote by the requester: exactly one field +1 for a new ballot, or -1/+1 to
+        // follow a changed ballot. The ballot rule checks membership and open status.
+        allow update: if onlyChanges(['yes', 'no']) && (
+          (createdNow(ballotPath(uid, request.auth.uid))
+            && tallyMoved(getAfter(ballotPath(uid, request.auth.uid)).data.choice, 1)
+            && tallyMoved(otherChoice(getAfter(ballotPath(uid, request.auth.uid)).data.choice), 0))
+          || (exists(ballotPath(uid, request.auth.uid))
+            && get(ballotPath(uid, request.auth.uid)).data.choice
+               != getAfter(ballotPath(uid, request.auth.uid)).data.choice
+            && tallyMoved(getAfter(ballotPath(uid, request.auth.uid)).data.choice, 1)
+            && tallyMoved(get(ballotPath(uid, request.auth.uid)).data.choice, -1)));
+
+        function tallyMoved(field, by) {
+          return request.resource.data[field] == resource.data[field] + by;
+        }
+
+        function otherChoice(c) {
+          return c == 'yes' ? 'no' : 'yes';
+        }
       }
     }
 
     // ---------- Bets ----------
 
     match /bets/{betId} {
-      allow read: if isMember() || isAdmin();
+      allow read: if isAdmin() || isMember();
       allow write: if isAdmin();
 
       match /ballots/{v} {

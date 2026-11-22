@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/rules-unit-testing';
-import { doc, setDoc, Timestamp, type Firestore } from 'firebase/firestore';
+import { doc, setDoc, setLogLevel, Timestamp, type Firestore } from 'firebase/firestore';
 import type { BetDoc, BetTally, JoinTally } from '../../src/model/types';
 
 export const ADMIN_EMAIL = 'admin@example.test';
@@ -12,6 +12,8 @@ const FIXED_TIME = Timestamp.fromMillis(Date.UTC(2026, 0, 1));
 
 /** Test environment running firestore.rules.src with the test admin email substituted in. */
 export function makeEnv(): Promise<RulesTestEnvironment> {
+  // Denied writes are expected; assertFails checks them, so keep the SDK from logging each one.
+  setLogLevel('silent');
   const rules = readFileSync(RULES_SRC, 'utf8').replaceAll('__ADMIN_EMAIL__', ADMIN_EMAIL);
   return initializeTestEnvironment({ projectId: 'demo-wicb', firestore: { rules } });
 }
@@ -88,16 +90,14 @@ export async function seed(env: RulesTestEnvironment, f: Fixture): Promise<void>
           voterCount: 0,
           createdAt: FIXED_TIME,
         }),
-        put(`joinRequests/${uid}/tally/counts`, { yes: 0, no: 0 }),
       );
+      if (!f.joinTallies?.[uid]) writes.push(put(`joinRequests/${uid}/tally/counts`, { yes: 0, no: 0 }));
+    }
+    for (const [uid, t] of Object.entries(f.joinTallies ?? {})) {
+      writes.push(put(`joinRequests/${uid}/tally/counts`, t));
     }
     for (const [id, bet] of Object.entries(f.bets ?? {})) writes.push(put(`bets/${id}`, betDoc(bet)));
     for (const [id, t] of Object.entries(f.betTallies ?? {})) writes.push(put(`bets/${id}/tally/counts`, t));
     await Promise.all(writes);
-
-    // Explicit join tallies override the zero tallies written for pending users.
-    await Promise.all(
-      Object.entries(f.joinTallies ?? {}).map(([uid, t]) => put(`joinRequests/${uid}/tally/counts`, t)),
-    );
   });
 }

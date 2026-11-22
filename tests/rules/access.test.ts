@@ -109,6 +109,14 @@ describe('base access rules', () => {
     );
   });
 
+  it('non-admin cannot write other users, join requests, or bets directly', async () => {
+    await assertFails(setDoc(doc(dbAs(env, 'ava'), 'users/jo'), { status: 'former', displayName: 'jo' }));
+    await assertFails(
+      setDoc(doc(dbAs(env, 'ava'), 'joinRequests/riley'), { status: 'approved', voterCount: 6 }),
+    );
+    await assertFails(setDoc(doc(dbAs(env, 'riley'), 'bets/b1'), { status: 'void' }));
+  });
+
   it('paths outside the data layout are denied', async () => {
     await assertFails(getDoc(doc(dbAs(env, 'ava'), 'secrets/x')));
     await assertFails(setDoc(doc(dbAs(env, 'ava'), 'secrets/x'), { a: 1 }));

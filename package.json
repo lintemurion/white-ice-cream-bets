@@ -8,7 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "rules": "node scripts/build-rules.mjs",
     "test:unit": "vitest run tests/unit tests/ui",
-    "test:emu": "firebase emulators:exec --only firestore --project demo-wicb \"vitest run tests/rules tests/data\"",
+    "test:emu": "node scripts/test-emu.mjs",
     "test": "npm run test:unit && npm run test:emu"
   },
   "dependencies": {
