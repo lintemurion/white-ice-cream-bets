@@ -231,6 +231,14 @@ describe('join votes', () => {
     expect(snap.data()).toEqual({ yes: 3, no: 3 });
   });
 
+  it('members can still read tally if memberCount drops below voterCount', async () => {
+    await voteAll(['yes', 'yes', 'no', 'yes', 'no']);
+    await env.withSecurityRulesDisabled((ctx) =>
+      updateDoc(doc(ctx.firestore() as unknown as Firestore, 'group/main'), { memberCount: 4 }),
+    );
+    await assertSucceeds(getDoc(doc(dbAs(env, 'ava'), 'joinRequests/riley/tally/counts')));
+  });
+
   it('applicant cannot read tally, voters, or ballots even after deciding', async () => {
     await voteAll(['yes', 'yes', 'yes', 'yes']);
     await approve(dbAs(env, 'ava'), 'riley');
@@ -260,6 +268,22 @@ describe('admission', () => {
     await seed(env, { members: MEMBERS, pending: ['riley', 'pia'], joinTallies: { riley: { yes: 4, no: 0 } } });
     await assertFails(approve(dbAs(env, 'jo'), 'riley', { bump: 2 }));
     await assertFails(approve(dbAs(env, 'jo'), 'riley', { lastAdmitted: 'pia' }));
+  });
+
+  it('approve batch that also bumps the tally is judged on the pre-batch tally', async () => {
+    // 3 yes, 1 no: no majority yet. priya flips her no to yes inside the approve batch.
+    await voteAll(['yes', 'yes', 'yes', 'no']);
+    const db = dbAs(env, 'priya');
+    const b = writeBatch(db);
+    b.update(doc(db, 'joinRequests/riley/ballots/priya'), { choice: 'yes' });
+    b.update(doc(db, 'joinRequests/riley/tally/counts'), { no: increment(-1), yes: increment(1) });
+    b.update(doc(db, 'joinRequests/riley'), { status: 'approved' });
+    b.update(doc(db, 'users/riley'), { status: 'member' });
+    b.update(doc(db, 'group/main'), { memberCount: increment(1), lastAdmitted: 'riley' });
+    await assertFails(b.commit());
+    // Done as two writes, the same steps succeed.
+    await assertSucceeds(changeJoinVote(db, 'priya', 'riley', 'no', 'yes'));
+    await assertSucceeds(approve(db, 'riley'));
   });
 
   it('two admissions in one batch cannot share a single +1', async () => {

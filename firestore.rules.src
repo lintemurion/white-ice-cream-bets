@@ -77,9 +77,13 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly(keys);
     }
 
-    // Trimmed, 1 to 30 chars. The client trims before writing.
+    // Trimmed, 1 to `max` chars. The client trims before writing.
+    function validText(s, max) {
+      return s is string && s == s.trim() && s.size() >= 1 && s.size() <= max;
+    }
+
     function validName(n) {
-      return n is string && n == n.trim() && n.size() >= 1 && n.size() <= 30;
+      return validText(n, 30);
     }
 
     // True when doc `path` is created by this same batch.
@@ -222,7 +226,7 @@ service cloud.firestore {
       match /tally/counts {
         allow read: if isAdmin() || (!isSelf(uid) && isMember() && (
           get(joinPath(uid)).data.status != 'open'
-          || get(joinPath(uid)).data.voterCount == memberCount()));
+          || get(joinPath(uid)).data.voterCount >= memberCount()));
         allow write: if isAdmin() && !isSelf(uid);
 
         // Request to join, step 3 of 3.
@@ -254,18 +258,111 @@ service cloud.firestore {
 
     // ---------- Bets ----------
 
+    function betPath(betId) {
+      return /databases/$(database)/documents/bets/$(betId);
+    }
+
+    function betTallyPath(betId) {
+      return /databases/$(database)/documents/bets/$(betId)/tally/counts;
+    }
+
     match /bets/{betId} {
       allow read: if isAdmin() || isMember();
-      allow write: if isAdmin();
+
+      // The admin may edit or delete any bet, but never vote: no admin write leaves the
+      // admin's own uid in votesA, votesB, or voters.
+      allow create, update: if isAdmin() && !hasAdminVote();
+      // Deleting an anonymous bet takes its tally in the same batch, so no orphan is left.
+      allow delete: if isAdmin()
+        && (resource.data.voteStyle != 'anonymous' || !existsAfter(betTallyPath(betId)));
+
+      // Propose. Side A is the creator. Anonymous bets create their zero tally in this batch.
+      allow create: if isMember() && proposing();
+
+      // One named predicate per transition. Later tasks add voting, settle and paid here.
+      allow update: if isMember() && (accepting() || callingIt());
+
+      // Decline (side B) or cancel (side A) while proposed. An anonymous bet's tally goes
+      // in the same batch, so no orphan tally is left behind.
+      allow delete: if isMember()
+        && resource.data.status == 'proposed'
+        && (isSelf(resource.data.sideA) || isSelf(resource.data.sideB))
+        && (resource.data.voteStyle != 'anonymous' || !existsAfter(betTallyPath(betId)));
+
+      function hasAdminVote() {
+        let d = request.resource.data;
+        return request.auth.uid in d.get('votesA', {})
+          || request.auth.uid in d.get('votesB', {})
+          || request.auth.uid in d.get('voters', {});
+      }
+
+      function proposing() {
+        let d = request.resource.data;
+        return hasExactly(['description', 'sideA', 'sideB', 'subject', 'stakeA', 'stakeB',
+            'voteStyle', 'status', 'winner', 'createdBy', 'createdAt',
+            'votesA', 'votesB', 'voters', 'voterCount'])
+          && d.sideA == request.auth.uid
+          && d.createdBy == request.auth.uid
+          && d.sideB is string
+          && d.sideB != d.sideA
+          && isMemberUid(d.sideB)
+          && (d.subject == null
+            || (d.subject is string
+              && d.subject != d.sideA
+              && d.subject != d.sideB
+              && isMemberUid(d.subject)))
+          && validText(d.description, 2000)
+          && validText(d.stakeA, 500)
+          && validText(d.stakeB, 500)
+          && d.voteStyle in ['open', 'anonymous']
+          && d.status == 'proposed'
+          && d.winner == null
+          && d.votesA == {}
+          && d.votesB == {}
+          && d.voters == {}
+          && d.voterCount == 0
+          && d.createdAt == request.time
+          // createdNow, not existsAfter: a leftover tally at this id must not be inherited.
+          && (d.voteStyle == 'open' || createdNow(betTallyPath(betId)));
+      }
+
+      // Side B accepts: proposed -> active, nothing else changes.
+      function accepting() {
+        return isSelf(resource.data.sideB)
+          && onlyChanges(['status'])
+          && resource.data.status == 'proposed'
+          && request.resource.data.status == 'active';
+      }
+
+      // Any member calls it: active -> voting, nothing else changes.
+      function callingIt() {
+        return onlyChanges(['status'])
+          && resource.data.status == 'active'
+          && request.resource.data.status == 'voting';
+      }
 
       match /ballots/{v} {
         allow read: if isAdmin() || isSelf(v);
-        allow write: if isAdmin();
+        // The admin cannot vote, so no admin write to a ballot under the admin's own uid.
+        allow write: if isAdmin() && !isSelf(v);
       }
 
       match /tally/counts {
         allow read: if isAdmin();
         allow write: if isAdmin();
+
+        // Propose, anonymous: the zero tally is created with its bet in the same batch.
+        allow create: if isMember()
+          && request.resource.data == {'A': 0, 'B': 0}
+          && createdNow(betPath(betId))
+          && getAfter(betPath(betId)).data.voteStyle == 'anonymous'
+          && getAfter(betPath(betId)).data.status == 'proposed';
+
+        // Decline or cancel, anonymous: deleted only alongside its proposed bet, by a side.
+        allow delete: if isMember()
+          && !existsAfter(betPath(betId))
+          && get(betPath(betId)).data.status == 'proposed'
+          && (isSelf(get(betPath(betId)).data.sideA) || isSelf(get(betPath(betId)).data.sideB));
       }
     }
 
