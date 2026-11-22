@@ -1,0 +1,105 @@
+rules_version = '2';
+
+// Source for firestore.rules. scripts/build-rules.mjs replaces __ADMIN_EMAIL__
+// with VITE_ADMIN_EMAIL from .env.local; tests substitute a test email.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- Helpers ----------
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return signedIn()
+        && request.auth.token.email == '__ADMIN_EMAIL__'
+        && request.auth.token.email_verified == true;
+    }
+
+    function userPath(uid) {
+      return /databases/$(database)/documents/users/$(uid);
+    }
+
+    function hasStatus(uid, status) {
+      return exists(userPath(uid)) && get(userPath(uid)).data.status == status;
+    }
+
+    function isMemberUid(uid) {
+      return hasStatus(uid, 'member');
+    }
+
+    // The admin is never a member, even if a member user doc exists for her uid.
+    function isMember() {
+      return signedIn() && !isAdmin() && isMemberUid(request.auth.uid);
+    }
+
+    function isPending() {
+      return signedIn() && hasStatus(request.auth.uid, 'pending');
+    }
+
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function memberCount() {
+      return get(/databases/$(database)/documents/group/main).data.memberCount;
+    }
+
+    // ---------- Group ----------
+
+    // Holds only a count and a uid; the pending waiting screen needs memberCount.
+    match /group/main {
+      allow read: if isMember() || isAdmin() || isPending();
+      allow write: if isAdmin();
+    }
+
+    // ---------- Users ----------
+
+    match /users/{uid} {
+      allow read: if isMember() || isAdmin() || isSelf(uid);
+      allow write: if isAdmin();
+    }
+
+    // ---------- Join requests ----------
+
+    match /joinRequests/{uid} {
+      allow read: if isMember() || isAdmin() || isSelf(uid);
+      allow write: if isAdmin();
+
+      match /voters/{v} {
+        allow read: if isMember() || isAdmin();
+        allow write: if isAdmin();
+      }
+
+      match /ballots/{v} {
+        allow read: if isAdmin() || isSelf(v);
+        allow write: if isAdmin();
+      }
+
+      match /tally/counts {
+        allow read: if isAdmin();
+        allow write: if isAdmin();
+      }
+    }
+
+    // ---------- Bets ----------
+
+    match /bets/{betId} {
+      allow read: if isMember() || isAdmin();
+      allow write: if isAdmin();
+
+      match /ballots/{v} {
+        allow read: if isAdmin() || isSelf(v);
+        allow write: if isAdmin();
+      }
+
+      match /tally/counts {
+        allow read: if isAdmin();
+        allow write: if isAdmin();
+      }
+    }
+
+    // Everything else is denied by default.
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "name": "white-ice-cream-bets",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "rules": "node scripts/build-rules.mjs",
+    "test:unit": "vitest run tests/unit tests/ui",
+    "test:emu": "firebase emulators:exec --only firestore --project demo-wicb \"vitest run tests/rules tests/data\"",
+    "test": "npm run test:unit && npm run test:emu"
+  },
+  "dependencies": {
+    "firebase": "^13.4.0",
+    "preact": "^11.2.0"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^6.0.0",
+    "@preact/preset-vite": "^2.10.6",
+    "@testing-library/preact": "^3.2.6",
+    "firebase-tools": "^15.37.0",
+    "jsdom": "^31.0.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.1"
+  }
+}
