@@ -1,3 +1,5 @@
 import { render } from 'preact';
+import { App } from './ui/App';
+import './styles.css';
 
-render(<h1>WHITE ICE CREAM BETS</h1>, document.getElementById('app')!);
+render(<App />, document.getElementById('app')!);
