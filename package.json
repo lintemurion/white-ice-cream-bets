@@ -11,7 +11,8 @@
     "test:unit": "vitest run tests/unit tests/ui",
     "test:emu": "node scripts/test-emu.mjs",
     "test": "npm run test:unit && npm run test:emu",
-    "icons": "node scripts/build-icons.mjs"
+    "icons": "node scripts/build-icons.mjs",
+    "check-bundle": "node scripts/check-bundle.mjs dist"
   },
   "dependencies": {
     "firebase": "^13.4.0",
@@ -26,6 +27,7 @@
     "jsdom": "^31.0.1",
     "typescript": "^7.0.2",
     "vite": "^8.3.8",
-    "vitest": "^5.1.1"
+    "vitest": "^5.1.1",
+    "yaml": "^2.9.1"
   }
 }
