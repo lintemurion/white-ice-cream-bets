@@ -37,21 +37,52 @@ A small phone-first web app for the White Ice Cream group to log friendly bets, 
 
    Save. It can take a few minutes to take effect.
 8. **Check the authorized domain.** Authentication > Settings > Authorized domains should list `<project>.web.app`. Add it if it's missing.
-9. **Point the CLI at your project.** `.firebaserc` uses the placeholder project `demo-wicb` (used by the emulator tests). Run:
+9. **Set up automatic deploys.** Follow [Automatic deploys](#automatic-deploys) below. `.env.local` (step 6) is then only needed for running or deploying from your own computer.
 
-   ```
-   npx firebase use --add <project>
-   ```
+## Automatic deploys
 
-   and give it the alias `default` when asked, or edit `.firebaserc` by hand.
-10. **Run the tests** (see below). They should all pass before the first deploy.
-11. **Deploy.**
+GitHub Actions deploys the site. Nobody runs deploy commands by hand.
 
-    ```
-    npx firebase deploy
-    ```
+- **Every pull request:** `.github/workflows/ci.yml` runs all the tests and the build. It never touches Firebase.
+- **Every push to `main`** (so every merged pull request), and **Actions > Deploy > Run workflow** on any branch: `.github/workflows/deploy.yml` runs the same tests, then deploys the site, the security rules, and the Firestore indexes to Firebase. A manual run from a branch deploys **that branch** to the live site; the next push to `main` puts `main` back.
 
-    This runs `npm run rules` (writes `firestore.rules` with your admin email from `.env.local`, lowercased) and `npm run build`, then uploads the site and the rules. `npx firebase deploy --only firestore` also regenerates the rules first. The site is at `https://<project>.web.app`.
+Deploys sign in to Google Cloud without a key (Workload Identity Federation): Google Cloud trusts GitHub Actions runs from this repository only, and each run gets a short-lived token. Nothing secret is stored in GitHub.
+
+### One-time setup
+
+1. **Run the setup script in Google Cloud Shell.** Open [shell.cloud.google.com](https://shell.cloud.google.com) (signed in as the project owner), then paste in the contents of [`scripts/setup-github-deploy.sh`](scripts/setup-github-deploy.sh), or upload the file and run `bash setup-github-deploy.sh`. It enables the APIs, creates a `github-deploy` service account with only the deploy roles, and sets up the trust for `lintemurion/white-ice-cream-bets`. It's safe to re-run. At the end it prints two lines: `WIF_PROVIDER=...` and `WIF_SERVICE_ACCOUNT=...`.
+2. **Add seven repository variables.** On GitHub: Settings > Secrets and variables > Actions > **Variables** tab > New repository variable. These are variables, not secrets: the Firebase web config is public by design.
+
+   | Variable | Value |
+   |---|---|
+   | `FIREBASE_PROJECT_ID` | `projectId` from the web app config |
+   | `FIREBASE_API_KEY` | `apiKey` from the web app config |
+   | `FIREBASE_APP_ID` | `appId` from the web app config |
+   | `FIREBASE_AUTH_DOMAIN` | `<project>.web.app` (not the `firebaseapp.com` value) |
+   | `ADMIN_EMAIL` | `<your google email>` |
+   | `WIF_PROVIDER` | printed by the setup script |
+   | `WIF_SERVICE_ACCOUNT` | printed by the setup script |
+
+3. **Deploy.** Merge to `main`, or go to Actions > Deploy > Run workflow and pick a branch. The site is at `https://<project>.web.app`.
+
+If a variable is missing, the deploy stops at "Check required variables" and names it. Before uploading, `npm run check-bundle` stops the deploy if the built site contains test settings (`demo-wicb`, the test admin email, or the auth emulator address).
+
+**If a deploy fails with a permission error,** the error names the missing permission or role. Add that role to the service account in Cloud Shell:
+
+```
+gcloud projects add-iam-policy-binding <project> --member="serviceAccount:github-deploy@<project>.iam.gserviceaccount.com" --role=<role>
+```
+
+### Deploying by hand (emergency only)
+
+From your own computer, with `.env.local` filled in and `npx firebase login` done:
+
+```
+npm test
+npx firebase deploy --project <project>
+```
+
+`firebase.json` runs `npm run rules` (your admin email from the environment or `.env.local`, lowercased) and `npm run build` first. Always pass `--project`: `.firebaserc` deliberately points at the fake `demo-wicb` project used by the tests.
 
 ## First run
 
