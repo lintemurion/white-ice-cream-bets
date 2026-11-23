@@ -2,6 +2,15 @@
 
 A small phone-first web app for the White Ice Cream group to log friendly bets, vote on who won, and keep track of who owes what. It runs on Firebase's free Spark plan: Google sign-in, Firestore, and Hosting. There are no Cloud Functions; the security rules in `firestore.rules.src` enforce every vote and majority.
 
+**Live site:** https://whiteicecreambets.web.app
+
+| Doc | For |
+|---|---|
+| [docs/USING.md](docs/USING.md) | the group: joining, betting, voting, paying up |
+| [Admin tasks](#admin-tasks) (below) | Kyle: running the group |
+| [docs/DEVELOPING.md](docs/DEVELOPING.md) | changing the app safely, and how changes ship |
+| [Feature requests](https://github.com/lintemurion/white-ice-cream-bets/issues/new?template=feature_request.md) | asking for something new |
+
 ## What you need
 
 - Node 22.12 or newer (Vitest 5 needs `^22.12.0 || ^24.0.0`; Node 24 works)
@@ -90,6 +99,20 @@ npx firebase deploy --project <project>
 2. Press **Set up group**. This creates the group record (member count 0).
 3. Have the founding members open the site, sign in with Google, and pick a name. Each one shows up under **Pending requests**.
 4. Approve each founding member from the admin page. After that, new people are voted in by the group, and you can still approve or reject directly.
+
+## Admin tasks
+
+Sign in with the admin email to get the admin page. The admin is never a member: no voting, no betting, never counted in a majority.
+
+- **Let someone in or keep them out:** under **Pending requests**, **Approve** or **Reject**. This skips the group vote.
+- **Let a rejected person ask again:** under **Rejected**, **Clear**. They can then sign in and request to join again.
+- **Rename someone:** edit the name under **Members** and tap **Rename**.
+- **Remove a member:** tap **Remove** and type their name exactly to confirm. They become a former member and can't get back in (unless you clear them later). Their votes come off anything still being voted on, bets they're in or about that haven't reached voting are cancelled, and every open vote is re-counted against the smaller group. Settled bets and debts involving them stay visible. Mark paid any debt owed **to** them yourself.
+- **Fix a bet:** under **Bets**, edit the description, stakes, or who it's about, and **Save**. You can't change a bet between open and anonymous; delete it and have them propose it again.
+- **Undo a result:** **Reopen vote** on a settled or paid bet. All its votes are cleared and the group votes again from scratch.
+- **Clear one person's vote** on a bet that's being voted on.
+- **Mark paid** on any settled bet.
+- **Delete a bet:** type `delete` to confirm.
 
 ## Tests
 
