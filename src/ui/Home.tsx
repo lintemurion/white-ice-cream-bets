@@ -23,12 +23,16 @@ export function Home(props: {
 }) {
   const s = props.sections;
   const group = (items: { id: string }[]) => items.map((i) => props.renderBet(i.id));
+  const empty =
+    props.joinIds.length === 0 &&
+    [s.needsYou, s.voting, s.active, s.proposedByMe, s.settled].every((list) => list.length === 0);
   return (
     <main class="screen">
       <header class="home-header">
         <h1 class="brand">WHITE ICE CREAM BETS</h1>
         <button type="button" class="btn primary" onClick={props.onNewBet}>+ New Bet</button>
       </header>
+      {empty && <p class="empty">No bets yet. Tap + New Bet to start one.</p>}
       <Section title="JOIN REQUESTS" count={props.joinIds.length}>{props.joinIds.map(props.renderJoin)}</Section>
       <Section title="NEEDS YOU" count={s.needsYou.length}>{group(s.needsYou)}</Section>
       <Section title="VOTING" count={s.voting.length}>{group(s.voting)}</Section>

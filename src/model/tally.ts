@@ -13,15 +13,21 @@ export interface VoteProgressInput {
   nameA: string;
   nameB: string;
   style: VoteStyle;
+  /** Anonymous only: forA/forB hold the revealed counts (the tally is readable). */
+  revealed?: boolean;
 }
 
 /**
  * Progress line for a bet in voting, against the live member count.
- * Anonymous bets never reveal counts; open bets name the leader and how many more settle it.
+ * Anonymous bets hide counts until revealed (then only say Tied); open bets name the leader and how many more settle it.
  */
 export function voteProgress(p: VoteProgressInput): string {
   const head = `${p.voterCount} of ${p.memberCount} voted.`;
-  if (p.style === 'anonymous') return `${head} Count shown when it's decided.`;
+  if (p.style === 'anonymous') {
+    if (!p.revealed) return `${head} Count shown when it's decided.`;
+    // Counts are out: everyone voted. Even means a tie; otherwise it is about to settle.
+    return p.forA === p.forB ? `${head} Tied.` : head;
+  }
 
   if (p.forA === p.forB) {
     return p.forA > 0 && p.voterCount >= p.memberCount ? `${head} Tied.` : head;

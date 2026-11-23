@@ -4,8 +4,8 @@ A small phone-first web app for the White Ice Cream group to log friendly bets, 
 
 ## What you need
 
-- Node 20 or newer
-- Java 11 or newer (the Firestore emulator needs it for the tests)
+- Node 22.12 or newer (Vitest 5 needs `^22.12.0 || ^24.0.0`; Node 24 works)
+- Java 21 or newer (firebase-tools 15 refuses to start the emulators on older Java)
 - The Firebase CLI, which is already a dev dependency (`npx firebase ...`). Run `npx firebase login` once.
 
 ## One-time setup (Kyle)
@@ -51,7 +51,7 @@ A small phone-first web app for the White Ice Cream group to log friendly bets, 
     npx firebase deploy
     ```
 
-    This runs `npm run rules` (writes `firestore.rules` with your admin email from `.env.local`) and `npm run build`, then uploads the site and the rules. The site is at `https://<project>.web.app`.
+    This runs `npm run rules` (writes `firestore.rules` with your admin email from `.env.local`, lowercased) and `npm run build`, then uploads the site and the rules. `npx firebase deploy --only firestore` also regenerates the rules first. The site is at `https://<project>.web.app`.
 
 ## First run
 
@@ -66,30 +66,43 @@ A small phone-first web app for the White Ice Cream group to log friendly bets, 
 npm test
 ```
 
-This runs the unit and screen tests, then the security-rules and data tests inside the Firestore emulator. It needs Java 11 or newer on your PATH. It never uses your real email: the rules for tests are generated with a fixed test admin address.
+This runs the unit and screen tests, then the security-rules and data tests inside the Firestore emulator. It needs Java 21 or newer on your PATH. It never uses your real email: the rules for tests are generated with a fixed test admin address.
 
 To run only the fast tests: `npm run test:unit`. To run one emulator file: `npm run test:emu -- tests/rules/joins.test.ts`.
 
 ## Running locally against the emulators
 
-1. In `.env.local`, set:
+Keep the emulator settings out of `.env.local`. That file feeds `npm run rules` and every production build, so emulator values there could deploy a site pointed at the fake `demo-wicb` project.
+
+1. Make `.env.development.local` (git-ignored). Vite loads it only for `npm run dev`, and its values override `.env.local`:
 
    ```
    VITE_USE_EMULATOR=true
    VITE_FIREBASE_PROJECT_ID=demo-wicb
+   VITE_FIREBASE_AUTH_DOMAIN=127.0.0.1
+   VITE_FIREBASE_API_KEY=demo-key
+   VITE_FIREBASE_APP_ID=demo-app
+   VITE_ADMIN_EMAIL=admin@example.test
    ```
 
    (Any non-empty API key and app ID work against the emulators.)
-2. Generate the rules: `npm run rules`.
-3. In one terminal:
+2. In one terminal, start the emulators:
 
    ```
-   npx firebase emulators:start --only auth,firestore --project demo-wicb
+   npm run emulators
    ```
 
-4. In another terminal: `npm run dev`, then open the address Vite prints. The auth emulator shows a fake Google sign-in page where you can type any email, including the admin one.
+   This writes the test rules (`node scripts/build-rules.mjs --test`, which uses `admin@example.test` and writes `.emulator/firestore.rules`) and starts the auth emulator on port 9099 and Firestore on 8080, using `firebase.dev.json`. It never touches your real `firestore.rules`.
+3. In another terminal:
 
-Set `VITE_USE_EMULATOR` and the project ID back before you deploy. The emulator switch only works in dev builds, so a production build never talks to the emulators.
+   ```
+   npm run dev -- --host 127.0.0.1
+   ```
+
+   Open **http://127.0.0.1:5173**, not `localhost`. The auth emulator runs on 127.0.0.1, and sign-in silently comes back signed out when the page is on `localhost`. Pass `--host` explicitly; on Windows Vite otherwise listens on `localhost` only.
+4. The auth emulator shows a fake Google sign-in page where you can type any email. Use `admin@example.test` for the admin page.
+
+The emulator switch only works in dev builds, so a production build never talks to the emulators, and `npm run build` and `npm run rules` never read `.env.development.local`.
 
 ## Updating the icon
 
@@ -103,6 +116,7 @@ No automated test can cover home-screen sign-in, so check it by hand after each 
 - [ ] Open it from the new icon. It opens full-screen with no Safari bar.
 - [ ] Sign in with Google. It comes back to the app and lands on the waiting screen (new person) or the home screen (member).
 - [ ] Android: open the site in Chrome, menu > Add to Home screen (or Install app), open from the icon, sign in, and confirm the same.
+- [ ] After the first deploy only: do one real anonymous bet vote, one real join vote, and one admin approval, to confirm the rules work on the live project.
 - [ ] Note the results in the PR description.
 
 ## Known limits

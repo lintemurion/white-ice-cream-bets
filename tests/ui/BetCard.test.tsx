@@ -83,6 +83,17 @@ describe('BetCard', () => {
     await waitFor(() => expect(actions.trySettle).toHaveBeenCalledWith('b1'));
   });
 
+  it('open voting names who voted which way, omitting a side with no voters', () => {
+    const b = bet({ status: 'voting', votesA: { ava: true, sam: true } });
+    show(b, 'maya');
+    expect(screen.getByText('Ava won: Ava, Sam')).toBeTruthy();
+    expect(screen.queryByText(/^Jo won:/)).toBeNull();
+    cleanup();
+    show(bet({ status: 'voting', votesA: { sam: true }, votesB: { maya: true, gone: true } }), 'ava');
+    expect(screen.getByText('Ava won: Sam')).toBeTruthy();
+    expect(screen.getByText('Jo won: Maya, Former member')).toBeTruthy();
+  });
+
   it('open voting: voting for the other side casts it and then tries to settle', async () => {
     const actions = show(bet({ status: 'voting' }), 'sam', { myVote: null });
     fireEvent.click(screen.getByRole('button', { name: 'Jo won' }));
@@ -99,6 +110,13 @@ describe('BetCard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Ava won' }));
     await waitFor(() => expect(actions.castAnonVote).toHaveBeenCalledWith('sam', 'b1', 'A'));
     await waitFor(() => expect(actions.trySettle).toHaveBeenCalledWith('b1'));
+  });
+
+  it('anonymous tie with revealed counts says Tied, not the hidden-count text', () => {
+    const b = bet({ status: 'voting', voteStyle: 'anonymous', voters: { ava: true, jo: true, maya: true, sam: true }, voterCount: 4 });
+    render(<BetCard id="b1" bet={b} me="sam" names={names} memberCount={4} tally={{ A: 2, B: 2 }} actions={makeActions()} />);
+    expect(screen.getByText('4 of 4 voted. Tied.')).toBeTruthy();
+    expect(screen.queryByText(/Count shown/)).toBeNull();
   });
 
   it('highlights my anonymous vote', () => {

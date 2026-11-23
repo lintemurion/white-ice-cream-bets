@@ -13,7 +13,25 @@ export interface Sections {
   proposedByMe: BetItem[];
 }
 
-/** Groups bets for the home screen. Void bets are hidden; settled lists unpaid first, then paid. */
+/** createdAt in ms; a pending server timestamp (null until it lands) counts as newest. */
+function createdMs(item: BetItem): number {
+  const t = item.bet.createdAt as { toMillis?: () => number } | null | undefined;
+  return typeof t?.toMillis === 'function' ? t.toMillis() : Number.POSITIVE_INFINITY;
+}
+
+/** Newest first. Stable, so equal timestamps keep their incoming order. */
+function newestFirst(items: BetItem[]): BetItem[] {
+  return items.sort((x, y) => {
+    const a = createdMs(x);
+    const b = createdMs(y);
+    return a === b ? 0 : a > b ? -1 : 1;
+  });
+}
+
+/**
+ * Groups bets for the home screen, newest first within each section. Void bets are hidden;
+ * settled lists unpaid first, then paid.
+ */
 export function sections(me: Uid, bets: BetItem[]): Sections {
   const out: Sections = { needsYou: [], voting: [], active: [], settled: [], proposedByMe: [] };
   const paid: BetItem[] = [];
@@ -39,7 +57,11 @@ export function sections(me: Uid, bets: BetItem[]): Sections {
         break;
     }
   }
-  out.settled.push(...paid);
+  newestFirst(out.needsYou);
+  newestFirst(out.voting);
+  newestFirst(out.active);
+  newestFirst(out.proposedByMe);
+  out.settled = [...newestFirst(out.settled), ...newestFirst(paid)];
   return out;
 }
 

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { sections, tallyReadable } from '../../src/ui/sections';
+import type { Timestamp } from 'firebase/firestore';
 import { bet } from './fixtures';
+
+const at = (ms: number) => ({ toMillis: () => ms }) as Timestamp;
 
 const item = (id: string, over = {}) => ({ id, bet: bet(over) });
 
@@ -27,6 +30,22 @@ describe('sections', () => {
     expect(s.voting.map((x) => x.id)).toEqual(['c']);
     const all = [s.needsYou, s.voting, s.active, s.settled, s.proposedByMe].flat().map((x) => x.id);
     expect(all).not.toContain('v');
+  });
+
+  it('sorts each section newest first; settled keeps unpaid before paid, each newest first', () => {
+    const s = sections('jo', [
+      item('old', { status: 'voting', createdAt: at(1) }),
+      item('new', { status: 'voting', createdAt: at(3) }),
+      item('mid', { status: 'voting', createdAt: at(2) }),
+      item('pending', { status: 'voting', createdAt: null as unknown as Timestamp }),
+      item('p-old', { status: 'paid', winner: 'A', createdAt: at(5) }),
+      item('p-new', { status: 'paid', winner: 'A', createdAt: at(9) }),
+      item('s-old', { status: 'settled', winner: 'A', createdAt: at(1) }),
+      item('s-new', { status: 'settled', winner: 'A', createdAt: at(4) }),
+    ]);
+    // A just-created bet whose server timestamp hasn't landed yet counts as newest.
+    expect(s.voting.map((x) => x.id)).toEqual(['pending', 'new', 'mid', 'old']);
+    expect(s.settled.map((x) => x.id)).toEqual(['s-new', 's-old', 'p-new', 'p-old']);
   });
 
   it("ignores other people's proposed bets", () => {

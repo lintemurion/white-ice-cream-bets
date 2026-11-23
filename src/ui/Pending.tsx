@@ -4,7 +4,8 @@ export function Pending(props: {
   memberCount: number | undefined;
   onSignOut: () => void;
 }) {
-  const known = props.voterCount !== undefined && props.memberCount !== undefined;
+  // With no members yet (founding members wait for the admin), "0 of 0 voted" means nothing.
+  const known = props.voterCount !== undefined && props.memberCount !== undefined && props.memberCount > 0;
   return (
     <main class="screen">
       <h1 class="brand">WHITE ICE CREAM BETS</h1>

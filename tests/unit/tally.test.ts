@@ -28,6 +28,20 @@ describe('voteProgress', () => {
     ).toBe("3 of 6 voted. Count shown when it's decided.");
   });
 
+  it('says Tied on an anonymous bet once the counts are revealed with no majority', () => {
+    const anon = { nameA: 'Maya', nameB: 'Sam', style: 'anonymous' as const };
+    expect(voteProgress({ forA: 3, forB: 3, voterCount: 6, memberCount: 6, revealed: true, ...anon })).toBe(
+      '6 of 6 voted. Tied.',
+    );
+    // Revealed with a majority: it is about to settle, so no hidden-count text either.
+    expect(voteProgress({ forA: 4, forB: 2, voterCount: 6, memberCount: 6, revealed: true, ...anon })).toBe(
+      '6 of 6 voted.',
+    );
+    expect(voteProgress({ forA: 0, forB: 0, voterCount: 6, memberCount: 6, ...anon })).toBe(
+      "6 of 6 voted. Count shown when it's decided.",
+    );
+  });
+
   it('says Tied once everyone voted and the sides are even', () => {
     expect(voteProgress({ forA: 3, forB: 3, voterCount: 6, memberCount: 6, ...open })).toBe('6 of 6 voted. Tied.');
   });

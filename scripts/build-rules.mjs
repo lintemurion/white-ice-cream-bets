@@ -24,7 +24,8 @@ function deployEmail() {
   return match?.[1].replace(/^(['"])(.*)\1$/, '$2').trim();
 }
 
-const email = testMode ? TEST_ADMIN_EMAIL : deployEmail();
+// Lowercased: the rules compare against request.auth.token.email.lower().
+const email = (testMode ? TEST_ADMIN_EMAIL : deployEmail())?.toLowerCase();
 if (!email) fail('VITE_ADMIN_EMAIL is missing or empty in .env.local');
 if (!/^[^\s'"\@]+@[^\s'"\@]+$/.test(email)) fail(`VITE_ADMIN_EMAIL is not a plain email: ${email}`);
 

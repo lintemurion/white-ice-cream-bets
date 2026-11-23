@@ -372,6 +372,12 @@ span.tag { align-self: flex-start; }
   font-size: 0.95rem;
 }
 
+.empty {
+  color: var(--fudge-soft);
+  text-align: center;
+  margin: 2rem 0;
+}
+
 .dots {
   color: var(--fudge);
   font-weight: 700;

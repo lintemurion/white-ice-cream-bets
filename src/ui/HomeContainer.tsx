@@ -14,6 +14,7 @@ import { JoinRequestCard, type JoinChoice } from './JoinRequestCard';
 import { LoadError } from './LoadError';
 import { NewBet } from './NewBet';
 import { sections, tallyReadable } from './sections';
+import { decideKey, settleKey, useBackgroundAttempt } from './autoSettle';
 
 const actions: BetActions = {
   accept: (id) => acceptBet(db, id),
@@ -32,6 +33,8 @@ function BetRow(props: { id: string; bet: BetDoc; me: Uid; names: Record<Uid, st
   const tally = useBetTally(id, readable).data;
   const anonVoting = bet.voteStyle === 'anonymous' && bet.status === 'voting';
   const ballot = useMyBallot<Side>(anonVoting ? `bets/${id}/ballots/${me}` : null).data;
+  // Retry the settle from every client, in case the deciding voter's phone locked first.
+  useBackgroundAttempt(settleKey(bet, props.memberCount, tally), () => actions.trySettle(id));
   return (
     <BetCard
       id={id}
@@ -48,6 +51,10 @@ function BetRow(props: { id: string; bet: BetDoc; me: Uid; names: Record<Uid, st
 
 function JoinRow(props: { id: string; req: JoinRequestDoc; me: Uid; memberCount: number }) {
   const ballot = useMyBallot<JoinChoice>(`joinRequests/${props.id}/ballots/${props.me}`).data;
+  // Retry the decision from every client, in case the deciding voter's phone locked first.
+  useBackgroundAttempt(decideKey(props.req.voterCount, props.memberCount, props.req.status), () =>
+    tryDecideJoin(db, props.id),
+  );
   return (
     <JoinRequestCard
       applicant={props.id}

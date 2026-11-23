@@ -14,6 +14,7 @@ import { Profile } from './Profile';
 import { HomeContainer } from './HomeContainer';
 import { AdminContainer } from './AdminContainer';
 import { LoadError } from './LoadError';
+import { checkRedirectReturn, clearRedirectStarted, markRedirectStarted, UNFINISHED_SIGN_IN } from './signInRedirect';
 
 const doSignOut = () => void signOut(auth);
 
@@ -25,6 +26,12 @@ export function App() {
   useEffect(() => {
     getRedirectResult(auth).catch(() => setSignInError("Sign-in didn't work. Please try again."));
   }, []);
+
+  // A redirect that came back with no user and no error would otherwise fail silently.
+  const authState = user === undefined ? 'loading' : user ? 'in' : 'out';
+  useEffect(() => {
+    if (checkRedirectReturn(user)) setSignInError((e) => e ?? UNFINISHED_SIGN_IN);
+  }, [authState]);
 
   const uid = user?.uid ?? null;
   const admin = isAdminUser(user);
@@ -43,9 +50,11 @@ export function App() {
 
   function signIn() {
     setSignInError(null);
-    signInWithRedirect(auth, new GoogleAuthProvider()).catch(() =>
-      setSignInError("Sign-in didn't work. Please try again."),
-    );
+    markRedirectStarted();
+    signInWithRedirect(auth, new GoogleAuthProvider()).catch(() => {
+      clearRedirectStarted();
+      setSignInError("Sign-in didn't work. Please try again.");
+    });
   }
 
   switch (screen) {

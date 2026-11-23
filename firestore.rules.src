@@ -13,7 +13,9 @@ service cloud.firestore {
 
     function isAdmin() {
       return signedIn()
-        && request.auth.token.email == '__ADMIN_EMAIL__'
+        // build-rules.mjs writes the admin email lowercased; compare case-insensitively
+        // to match the client's isAdminUser. get() keeps a token with no email from erroring.
+        && request.auth.token.get('email', '').lower() == '__ADMIN_EMAIL__'
         && request.auth.token.email_verified == true;
     }
 

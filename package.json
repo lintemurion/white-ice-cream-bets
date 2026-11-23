@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "emulators": "node scripts/build-rules.mjs --test && firebase emulators:start --config firebase.dev.json --only auth,firestore --project demo-wicb",
     "build": "tsc --noEmit && vite build",
     "rules": "node scripts/build-rules.mjs",
     "test:unit": "vitest run tests/unit tests/ui",

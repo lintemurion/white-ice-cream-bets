@@ -171,10 +171,18 @@ export function BetCard(props: {
         {bet.status === 'voting' && (
           <>
             {bet.voteStyle === 'open' ? (
-              <p class="dots">
-                {nameA} won {dots(Object.keys(bet.votesA).length, needed(memberCount))}{' '}
-                {nameB} won {dots(Object.keys(bet.votesB).length, needed(memberCount))}
-              </p>
+              <>
+                <p class="dots">
+                  {nameA} won {dots(Object.keys(bet.votesA).length, needed(memberCount))}{' '}
+                  {nameB} won {dots(Object.keys(bet.votesB).length, needed(memberCount))}
+                </p>
+                {([[nameA, bet.votesA], [nameB, bet.votesB]] as const).map(
+                  ([name, votes]) =>
+                    Object.keys(votes).length > 0 && (
+                      <p class="voted">{name} won: {Object.keys(votes).map(nameOf).join(', ')}</p>
+                    ),
+                )}
+              </>
             ) : (
               <>
                 <p class="voted">Voted: {Object.keys(bet.voters).map(nameOf).join(', ') || 'nobody yet'}</p>
@@ -183,13 +191,14 @@ export function BetCard(props: {
             )}
             <p class="progress">
               {voteProgress({
-                forA: Object.keys(bet.votesA).length,
-                forB: Object.keys(bet.votesB).length,
+                forA: bet.voteStyle === 'open' ? Object.keys(bet.votesA).length : (props.tally?.A ?? 0),
+                forB: bet.voteStyle === 'open' ? Object.keys(bet.votesB).length : (props.tally?.B ?? 0),
                 voterCount: bet.voteStyle === 'open' ? Object.keys(bet.votesA).length + Object.keys(bet.votesB).length : bet.voterCount,
                 memberCount,
                 nameA,
                 nameB,
                 style: bet.voteStyle,
+                revealed: bet.voteStyle === 'anonymous' && !!props.tally,
               })}
             </p>
             <div class="row">
