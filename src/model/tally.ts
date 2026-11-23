@@ -31,10 +31,13 @@ export function voteProgress(p: VoteProgressInput): string {
   return more > 0 ? `${head} ${more} more for ${name} settles it.` : head;
 }
 
+/** Shown for a uid with no name on record. */
+export const FORMER = 'Former member';
+
 /** "<loser> owes <winner>: <loser's stake>" for a settled or paid bet. */
 export function owesLine(bet: BetDoc, names: Record<Uid, string>): string {
   if (bet.winner === null) throw new Error('owesLine needs a bet with a winner');
   const [winner, loser, stake] =
     bet.winner === 'A' ? [bet.sideA, bet.sideB, bet.stakeB] : [bet.sideB, bet.sideA, bet.stakeA];
-  return `${names[loser] ?? loser} owes ${names[winner] ?? winner}: ${stake}`;
+  return `${names[loser] ?? FORMER} owes ${names[winner] ?? FORMER}: ${stake}`;
 }

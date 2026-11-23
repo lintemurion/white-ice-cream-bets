@@ -48,6 +48,9 @@ describe('voteProgress', () => {
 });
 
 describe('owesLine', () => {
+  it('never prints a raw uid for an unknown name', () => {
+    expect(owesLine(betDoc({ status: 'settled', winner: 'A', stakeB: '$5' }), { ava: 'Ava' })).toBe('Former member owes Ava: $5');
+  });
   it('has the loser owe the winner her stake', () => {
     expect(owesLine(betDoc({ status: 'settled', winner: 'A', stakeB: 'a ride to the mall' }), { ava: 'Ava', jo: 'Jo' })).toBe(
       'Jo owes Ava: a ride to the mall',

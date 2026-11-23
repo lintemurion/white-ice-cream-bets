@@ -11,6 +11,8 @@ import { ChooseName, defaultName } from './ChooseName';
 import { Pending } from './Pending';
 import { Blocked } from './Blocked';
 import { Profile } from './Profile';
+import { HomeContainer } from './HomeContainer';
+import { LoadError } from './LoadError';
 
 const doSignOut = () => void signOut(auth);
 
@@ -25,17 +27,18 @@ export function App() {
 
   const uid = user?.uid ?? null;
   const admin = isAdminUser(user);
-  const userDoc = useMyUser(user && !admin ? uid : null);
+  const { data: userDoc, error: userDocError } = useMyUser(user && !admin ? uid : null);
   const screen = route({
     authLoading: user === undefined,
     email: user?.email ?? null,
     isAdmin: admin,
     userDoc: user && !admin ? userDoc : null,
+    userDocError,
   });
 
   const isPending = screen === 'pending';
-  const myJoin = useMyJoinRequest(isPending ? uid : null);
-  const group = useGroup(isPending);
+  const myJoin = useMyJoinRequest(isPending ? uid : null).data;
+  const group = useGroup(isPending).data;
 
   function signIn() {
     setSignInError(null);
@@ -45,6 +48,8 @@ export function App() {
   }
 
   switch (screen) {
+    case 'error':
+      return <LoadError />;
     case 'loading':
       return <main class="screen"><p>Loading...</p></main>;
     case 'signIn':
@@ -87,13 +92,6 @@ export function App() {
           />
         );
       }
-      return (
-        <main class="screen">
-          <h1 class="brand">WHITE ICE CREAM BETS</h1>
-          <p>Hi, {userDoc?.displayName}. Bets are coming soon.</p>
-          <button type="button" class="btn link" onClick={() => setShowProfile(true)}>Profile</button>
-          <button type="button" class="btn link" onClick={doSignOut}>Sign out</button>
-        </main>
-      );
+      return <HomeContainer me={uid!} onProfile={() => setShowProfile(true)} onSignOut={doSignOut} />;
   }
 }

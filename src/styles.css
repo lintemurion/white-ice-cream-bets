@@ -13,3 +13,21 @@ input { font: inherit; padding: 0.7rem; border: 1px solid #bbb; border-radius: 0
 .error { color: var(--err); margin: 0; }
 .ok { margin: 0; }
 .progress { font-weight: 600; }
+.home-header { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.home-header .brand { margin: 0; text-align: left; }
+.home-section h2 { font-size: 0.85rem; letter-spacing: 0.1em; margin: 0.5rem 0; }
+.card { border: 1px solid #ddd; border-radius: 0.75rem; padding: 0.75rem; margin-bottom: 0.75rem; display: flex; flex-direction: column; gap: 0.4rem; }
+.card p { margin: 0; }
+.card.paid { opacity: 0.55; }
+.card .title { font-weight: 600; }
+.tag { font-weight: 400; color: #666; }
+.desc, .stakes { white-space: pre-wrap; overflow-wrap: anywhere; }
+.clamped { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; }
+.desc.clamped { -webkit-line-clamp: 3; line-clamp: 3; }
+.stakes.clamped { -webkit-line-clamp: 2; line-clamp: 2; }
+.row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.more { align-self: flex-start; min-height: 0; padding: 0.2rem 0.4rem; }
+textarea, select { font: inherit; padding: 0.7rem; border: 1px solid #bbb; border-radius: 0.5rem; }
+.counter { font-weight: 400; font-size: 0.85rem; color: #666; align-self: flex-end; }
+fieldset { border: 0; padding: 0; margin: 0; display: flex; gap: 1rem; }
+label.inline { flex-direction: row; align-items: center; font-weight: 400; }

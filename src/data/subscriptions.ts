@@ -14,44 +14,50 @@ import type { BetDoc, BetTally, GroupDoc, JoinRequestDoc, JoinTally, Uid, UserDo
 
 export type WithId<T> = T & { id: string };
 
-/** Live doc. undefined = loading (or disabled), null = does not exist. Errors resolve to null. */
-function useDocData<T>(ref: () => DocumentReference | null, key: string): T | null | undefined {
-  const [data, setData] = useState<T | null | undefined>(undefined);
+/** A live value. data undefined = loading (or disabled); error = the listener failed. */
+export interface Live<T> {
+  data: T | undefined;
+  error: boolean;
+}
+
+/** Live doc. data undefined = loading (or disabled), null = does not exist. Errors set `error`, never `null`. */
+function useDocData<T>(ref: () => DocumentReference | null, key: string): Live<T | null> {
+  const [state, setState] = useState<Live<T | null>>({ data: undefined, error: false });
   useEffect(() => {
-    setData(undefined);
+    setState({ data: undefined, error: false });
     const r = ref();
     if (!r) return;
     return onSnapshot(
       r,
-      (snap) => setData(snap.exists() ? (snap.data() as T) : null),
+      (snap) => setState({ data: snap.exists() ? (snap.data() as T) : null, error: false }),
       (err) => {
         console.error(`snapshot ${key}`, err);
-        setData(null);
+        setState({ data: undefined, error: true });
       },
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
-  return data;
+  return state;
 }
 
-/** Live query. undefined = loading (or disabled). Errors resolve to an empty list. */
-function useQueryData<T>(q: () => Query | null, key: string): WithId<T>[] | undefined {
-  const [data, setData] = useState<WithId<T>[] | undefined>(undefined);
+/** Live query. data undefined = loading (or disabled). Errors set `error`, never an empty list. */
+function useQueryData<T>(q: () => Query | null, key: string): Live<WithId<T>[]> {
+  const [state, setState] = useState<Live<WithId<T>[]>>({ data: undefined, error: false });
   useEffect(() => {
-    setData(undefined);
+    setState({ data: undefined, error: false });
     const query_ = q();
     if (!query_) return;
     return onSnapshot(
       query_,
-      (snap) => setData(snap.docs.map((d) => ({ ...(d.data() as T), id: d.id }))),
+      (snap) => setState({ data: snap.docs.map((d) => ({ ...(d.data() as T), id: d.id })), error: false }),
       (err) => {
         console.error(`snapshot ${key}`, err);
-        setData([]);
+        setState({ data: undefined, error: true });
       },
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
-  return data;
+  return state;
 }
 
 /** undefined = auth still resolving, null = signed out. */
@@ -75,6 +81,14 @@ export function useMembers(enabled: boolean) {
   return useQueryData<UserDoc>(
     () => (enabled ? query(collection(db, 'users'), where('status', '==', 'member')) : null),
     `members:${enabled}`,
+  );
+}
+
+/** Current and former members, for names on bets (debts stay visible after someone leaves). */
+export function useBetNames(enabled: boolean) {
+  return useQueryData<UserDoc>(
+    () => (enabled ? query(collection(db, 'users'), where('status', 'in', ['member', 'former'])) : null),
+    `betnames:${enabled}`,
   );
 }
 

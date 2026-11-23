@@ -32,3 +32,16 @@ describe('route', () => {
     expect(route({ ...signedIn, userDoc: userDoc('member') })).toBe('home');
   });
 });
+
+describe('route with a load error', () => {
+  it('shows the error screen instead of choose-name when the user doc failed to load', () => {
+    expect(route({ authLoading: false, email: 'a@x', isAdmin: false, userDoc: undefined, userDocError: true })).toBe('error');
+  });
+  it('an error never reaches routing on a stale null', () => {
+    expect(route({ authLoading: false, email: 'a@x', isAdmin: false, userDoc: null, userDocError: true })).toBe('error');
+  });
+  it('admin and signed-out ignore the error flag', () => {
+    expect(route({ authLoading: false, email: 'k@x', isAdmin: true, userDoc: undefined, userDocError: true })).toBe('admin');
+    expect(route({ authLoading: false, email: null, isAdmin: false, userDoc: undefined, userDocError: true })).toBe('signIn');
+  });
+});
