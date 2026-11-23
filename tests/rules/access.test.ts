@@ -100,6 +100,20 @@ describe('base access rules', () => {
     await assertFails(setDoc(doc(db, 'group/main'), { memberCount: 99, lastAdmitted: null }));
   });
 
+  it('admin email matches regardless of case, like the client check', async () => {
+    const db = env
+      .authenticatedContext(ADMIN_UID, { email: ADMIN_EMAIL.toUpperCase(), email_verified: true })
+      .firestore();
+    await assertSucceeds(getDoc(doc(db, 'joinRequests/riley/tally/counts')));
+    await assertSucceeds(setDoc(doc(db, 'group/main'), { memberCount: 6, lastAdmitted: null }));
+  });
+
+  it('a member token with no email is still a member, and never the admin', async () => {
+    const db = env.authenticatedContext('ava', {}).firestore();
+    await assertSucceeds(getDoc(doc(db, 'bets/b1')));
+    await assertFails(setDoc(doc(db, 'group/main'), { memberCount: 99, lastAdmitted: null }));
+  });
+
   it('nobody but admin writes group/main directly', async () => {
     await assertFails(
       setDoc(doc(dbAs(env, 'ava'), 'group/main'), { memberCount: 99, lastAdmitted: null }),
@@ -107,6 +121,14 @@ describe('base access rules', () => {
     await assertSucceeds(
       setDoc(doc(dbAs(env, 'admin'), 'group/main'), { memberCount: 6, lastAdmitted: null }),
     );
+  });
+
+  it('non-admin cannot write other users, join requests, or bets directly', async () => {
+    await assertFails(setDoc(doc(dbAs(env, 'ava'), 'users/jo'), { status: 'former', displayName: 'jo' }));
+    await assertFails(
+      setDoc(doc(dbAs(env, 'ava'), 'joinRequests/riley'), { status: 'approved', voterCount: 6 }),
+    );
+    await assertFails(setDoc(doc(dbAs(env, 'riley'), 'bets/b1'), { status: 'void' }));
   });
 
   it('paths outside the data layout are denied', async () => {
