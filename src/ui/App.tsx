@@ -12,6 +12,7 @@ import { Pending } from './Pending';
 import { Blocked } from './Blocked';
 import { Profile } from './Profile';
 import { HomeContainer } from './HomeContainer';
+import { AdminContainer } from './AdminContainer';
 import { LoadError } from './LoadError';
 
 const doSignOut = () => void signOut(auth);
@@ -74,13 +75,7 @@ export function App() {
     case 'blocked':
       return <Blocked onSignOut={doSignOut} />;
     case 'admin':
-      return (
-        <main class="screen">
-          <h1 class="brand">WHITE ICE CREAM BETS</h1>
-          <p>Admin page coming soon.</p>
-          <button type="button" class="btn link" onClick={doSignOut}>Sign out</button>
-        </main>
-      );
+      return <AdminContainer onSignOut={doSignOut} />;
     case 'home':
       if (showProfile && userDoc) {
         return (

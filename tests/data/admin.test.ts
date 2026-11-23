@@ -275,6 +275,24 @@ describe('admin data layer', () => {
     expect(await peek('bets/b1')).toMatchObject({ stakeA: '$5' });
   });
 
+  it('adminEditBet rejects a subject that is a side or not a member', async () => {
+    await seed(env, { members: MEMBERS, bets: { b1: { status: 'active' } } });
+    const { sideA, sideB } = (await peek('bets/b1')) as { sideA: string; sideB: string };
+    await expect(adminEditBet(admin, 'b1', { subject: sideA })).rejects.toThrow(/side/);
+    await expect(adminEditBet(admin, 'b1', { subject: sideB })).rejects.toThrow(/side/);
+    await expect(adminEditBet(admin, 'b1', { subject: 'nobody' })).rejects.toThrow(/member/);
+    const other = MEMBERS.find((m) => m !== sideA && m !== sideB)!;
+    await adminEditBet(admin, 'b1', { subject: other });
+    expect(await peek('bets/b1')).toMatchObject({ subject: other });
+  });
+
+  it('adminEditBet does not re-check an unchanged subject who is now a former member', async () => {
+    await seed(env, { members: MEMBERS, former: ['gone'], bets: { b1: { status: 'settled', winner: 'A', subject: 'gone' } } });
+    await adminEditBet(admin, 'b1', { description: 'Fixed text' });
+    await adminEditBet(admin, 'b1', { description: 'Fixed again', subject: 'gone' });
+    expect(await peek('bets/b1')).toMatchObject({ description: 'Fixed again', subject: 'gone' });
+  });
+
   it('adminEditBet switching a bet to anonymous gives it a zero tally so members can vote', async () => {
     await seed(env, { members: MEMBERS, bets: { b1: { status: 'voting' } } });
     await adminEditBet(admin, 'b1', { voteStyle: 'anonymous' });

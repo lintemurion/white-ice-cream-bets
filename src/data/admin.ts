@@ -156,6 +156,15 @@ export async function adminEditBet(db: Firestore, betId: string, patch: BetPatch
   const tallyRef = doc(db, `bets/${betId}/tally/counts`);
   await runTransaction(db, async (tx) => {
     const tally = patch.voteStyle === 'anonymous' ? await tx.get(tallyRef) : null;
+    const bet = patch.subject ? ((await tx.get(ref)).data() as BetDoc | undefined) : undefined;
+    // A changed subject must be a current member and neither side. An unchanged one is never
+    // re-checked: a removed member can still be the subject of a kept bet.
+    if (patch.subject && patch.subject !== bet?.subject) {
+      if (!bet) throw new Error('Bet not found');
+      if (patch.subject === bet.sideA || patch.subject === bet.sideB) throw new Error('The subject cannot be a side of the bet');
+      const subject = (await tx.get(doc(db, `users/${patch.subject}`))).data() as UserDoc | undefined;
+      if (subject?.status !== 'member') throw new Error('The subject must be a current member');
+    }
     tx.update(ref, data);
     if (tally && !tally.exists()) tx.set(tallyRef, { A: 0, B: 0 } satisfies BetTally);
   });

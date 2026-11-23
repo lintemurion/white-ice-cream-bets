@@ -92,6 +92,11 @@ export function useBetNames(enabled: boolean) {
   );
 }
 
+/** Every user in any status. Admin only. */
+export function useAllUsers(enabled: boolean) {
+  return useQueryData<UserDoc>(() => (enabled ? collection(db, 'users') : null), `allusers:${enabled}`);
+}
+
 export function useBets(enabled: boolean) {
   return useQueryData<BetDoc>(() => (enabled ? collection(db, 'bets') : null), `bets:${enabled}`);
 }
