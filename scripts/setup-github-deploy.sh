@@ -4,7 +4,10 @@
 # the project owner:
 #
 #   1. Open https://shell.cloud.google.com
-#   2. Paste this file into the terminal, or upload it and run: bash setup-github-deploy.sh
+#   2. Upload this file (the three-dot menu > Upload), then run: bash setup-github-deploy.sh
+#
+# Run it as a file with bash. Don't type or copy its lines straight into the terminal: the
+# strict error settings below would close your Cloud Shell session on the first error.
 #
 # Safe to re-run: anything that already exists is left alone.
 # At the end it prints the two values to add as GitHub repository variables.

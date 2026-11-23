@@ -43,6 +43,30 @@ describe('ci.yml', () => {
   });
 });
 
+describe('firebase.json', () => {
+  const firebase = JSON.parse(readFileSync('firebase.json', 'utf8'));
+
+  it('checks the bundle that is actually uploaded, right after building it', () =>
+    expect(firebase.hosting.predeploy).toEqual(['npm run rules', 'npm run build', 'npm run check-bundle']));
+});
+
+describe('Cloud Shell setup instructions', () => {
+  // Pasting a `set -euo pipefail` script into an interactive shell closes the session on the
+  // first error, hiding the message. The script must be run with bash as a file.
+  const script = readFileSync('scripts/setup-github-deploy.sh', 'utf8');
+  const readme = readFileSync('README.md', 'utf8');
+
+  it('never tell you to paste the script into the shell', () => {
+    expect(script).not.toMatch(/paste/i);
+    expect(readme.match(/^.*setup-github-deploy\.sh.*$/gm)?.join('\n')).not.toMatch(/paste/i);
+  });
+
+  it('say to run it with bash', () => {
+    expect(script).toContain('bash setup-github-deploy.sh');
+    expect(readme).toContain('bash setup-github-deploy.sh');
+  });
+});
+
 describe('deploy.yml', () => {
   it('runs on push to main and workflow_dispatch only', () => {
     expect(Object.keys(deploy.on).sort()).toEqual(['push', 'workflow_dispatch']);

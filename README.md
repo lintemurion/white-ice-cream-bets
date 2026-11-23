@@ -50,7 +50,7 @@ Deploys sign in to Google Cloud without a key (Workload Identity Federation): Go
 
 ### One-time setup
 
-1. **Run the setup script in Google Cloud Shell.** Open [shell.cloud.google.com](https://shell.cloud.google.com) (signed in as the project owner), then paste in the contents of [`scripts/setup-github-deploy.sh`](scripts/setup-github-deploy.sh), or upload the file and run `bash setup-github-deploy.sh`. It enables the APIs, creates a `github-deploy` service account with only the deploy roles, and sets up the trust for `lintemurion/white-ice-cream-bets`. It's safe to re-run. At the end it prints two lines: `WIF_PROVIDER=...` and `WIF_SERVICE_ACCOUNT=...`.
+1. **Run the setup script in Google Cloud Shell.** Open [shell.cloud.google.com](https://shell.cloud.google.com) (signed in as the project owner). Upload [`scripts/setup-github-deploy.sh`](scripts/setup-github-deploy.sh) with the three-dot menu > Upload, then run `bash setup-github-deploy.sh`. Run it as a file; don't copy its lines into the terminal, because its strict error settings would close the Cloud Shell session on the first error. It enables the APIs, creates a `github-deploy` service account with only the deploy roles, and sets up the trust for `lintemurion/white-ice-cream-bets`. It's safe to re-run. At the end it prints two lines: `WIF_PROVIDER=...` and `WIF_SERVICE_ACCOUNT=...`.
 2. **Add seven repository variables.** On GitHub: Settings > Secrets and variables > Actions > **Variables** tab > New repository variable. These are variables, not secrets: the Firebase web config is public by design.
 
    | Variable | Value |
@@ -65,7 +65,7 @@ Deploys sign in to Google Cloud without a key (Workload Identity Federation): Go
 
 3. **Deploy.** Merge to `main`, or go to Actions > Deploy > Run workflow and pick a branch. The site is at `https://<project>.web.app`.
 
-If a variable is missing, the deploy stops at "Check required variables" and names it. Before uploading, `npm run check-bundle` stops the deploy if the built site contains test settings (`demo-wicb`, the test admin email, or the auth emulator address).
+If a variable is missing, the deploy stops at "Check required variables" and names it. `firebase deploy` rebuilds the site and runs `npm run check-bundle` on exactly what it's about to upload (this also covers hand deploys); it stops the deploy if the site contains test settings (`demo-wicb`, the test admin email, or the auth emulator address).
 
 **If a deploy fails with a permission error,** the error names the missing permission or role. Add that role to the service account in Cloud Shell:
 

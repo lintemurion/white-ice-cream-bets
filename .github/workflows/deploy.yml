@@ -67,6 +67,8 @@ jobs:
           workload_identity_provider: ${{ vars.WIF_PROVIDER }}
           service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
 
+      # Early checks, so a bad config fails here with a clear step name. firebase deploy then
+      # rebuilds and re-checks the bundle it uploads (firebase.json hosting.predeploy).
       - run: npm run rules
 
       - run: npm run build

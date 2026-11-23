@@ -31,7 +31,8 @@
     ],
     "predeploy": [
       "npm run rules",
-      "npm run build"
+      "npm run build",
+      "npm run check-bundle"
     ]
   },
   "emulators": {
