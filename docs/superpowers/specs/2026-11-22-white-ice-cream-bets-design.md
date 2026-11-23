@@ -74,6 +74,8 @@ Vote styles (Kyle's decision on who picks; the mechanics are Claude's proposal):
 - **Open:** everyone can see who voted which way, and the running count shows live.
 - **Anonymous:** members can see *who* has voted but not *which way*. Each voter's choice is in a private ballot that only she (and the admin) can read, so she can see and change her own vote. The yes/no counts stay hidden until the bet settles or every current member has voted, because a live count would reveal each vote as it lands. Known limits, accepted: whoever casts the deciding vote can be guessed by someone watching closely, and Kyle can see every ballot in the Firebase console.
 
+  **Known limit, accepted by Kyle (2026-11-22): anonymity is not proof against a determined member.** The Task 5 review found that a member who writes her own database requests from the browser's developer tools can recover the hidden count by trial and error. The rules must check each new count against the old one, so a guessed count is rejected and the right one accepted. Combined with watching who votes when, that can reveal how each person voted. This applies to anonymous bets and to join votes. It cannot be closed on the free Spark plan; it would take a server-side tally (Blaze plan + Cloud Functions). It does **not** let anyone change an outcome: voting twice, voting as someone else, faking the count, and settling without a true majority all stay blocked. In practice, "anonymous" means the app never shows how anyone voted, not that it's impossible to find out.
+
 Bet lifecycle:
 
 1. **Proposed.** A member creates the bet. The creator must be one of the two sides. (Claude's call, so nobody can drop a bet onto two other people.)
@@ -154,7 +156,7 @@ These must hold even against a member editing requests from the browser:
 - A bet becomes settled, and a pending user becomes a member, only when a true majority of members has voted for it (or the admin did it).
 - Only the winner (or admin) can mark a bet paid.
 - Former members can read and write nothing.
-- On anonymous bets and all join requests: no member can read another member's ballot; nobody (except the admin) can read the counts before the vote is decided or everyone has voted; and the pending user can't learn who voted which way.
+- On anonymous bets and all join requests: no member can read another member's ballot; nobody (except the admin) can read the counts before the vote is decided or everyone has voted; and the pending user can't learn who voted which way. (Direct reads are blocked; trial-and-error writes can still reveal counts. See the accepted known limit under Vote styles.)
 - The vote style of a bet can't be changed after it's proposed, except by the admin.
 
 ## Decision: free plan, rules-enforced majority

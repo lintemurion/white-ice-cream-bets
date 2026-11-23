@@ -91,6 +91,38 @@ service cloud.firestore {
       return !exists(path) && existsAfter(path);
     }
 
+    // ---------- Anonymous votes (join requests and anonymous bets) ----------
+    // A vote is a batch of the voter's ballot, a voter mark, and the tally. Each doc's rule
+    // checks the others with get/getAfter, so none can be written alone.
+
+    // Field `field` of doc `path` moves by exactly `by` in this batch.
+    function bumped(path, field, by) {
+      return getAfter(path).data[field] == get(path).data[field] + by;
+    }
+
+    // On a tally update: field `field` moves by exactly `by`.
+    function tallyMoved(field, by) {
+      return request.resource.data[field] == resource.data[field] + by;
+    }
+
+    function otherOf(c, x, y) {
+      return c == x ? y : x;
+    }
+
+    // A tally update (fields x and y) that follows the requester's ballot at `ballot`:
+    // a new ballot moves its choice +1 and the other field not at all; a changed ballot
+    // moves the new choice +1 and the old one -1. The ballot rule checks membership and status.
+    function tallyFollowsBallot(ballot, x, y) {
+      return onlyChanges([x, y]) && (
+        (createdNow(ballot)
+          && tallyMoved(getAfter(ballot).data.choice, 1)
+          && tallyMoved(otherOf(getAfter(ballot).data.choice, x, y), 0))
+        || (exists(ballot)
+          && get(ballot).data.choice != getAfter(ballot).data.choice
+          && tallyMoved(getAfter(ballot).data.choice, 1)
+          && tallyMoved(get(ballot).data.choice, -1)));
+    }
+
     // ---------- Group ----------
 
     // Holds only a count and a uid; the pending waiting screen needs memberCount.
@@ -207,8 +239,7 @@ service cloud.firestore {
           && get(joinPath(uid)).data.status == 'open'
           && getAfter(joinPath(uid)).data.voterCount == get(joinPath(uid)).data.voterCount + 1
           && existsAfter(votersPath(uid, v))
-          && getAfter(tallyPath(uid)).data[request.resource.data.choice]
-             == get(tallyPath(uid)).data[request.resource.data.choice] + 1;
+          && bumped(tallyPath(uid), request.resource.data.choice, 1);
 
         // Changed vote: old choice -1, new choice +1 (the tally rule pins the rest).
         allow update: if isSelf(v) && isMember()
@@ -216,10 +247,8 @@ service cloud.firestore {
           && request.resource.data.choice in ['yes', 'no']
           && request.resource.data.choice != resource.data.choice
           && get(joinPath(uid)).data.status == 'open'
-          && getAfter(tallyPath(uid)).data[request.resource.data.choice]
-             == get(tallyPath(uid)).data[request.resource.data.choice] + 1
-          && getAfter(tallyPath(uid)).data[resource.data.choice]
-             == get(tallyPath(uid)).data[resource.data.choice] - 1;
+          && bumped(tallyPath(uid), request.resource.data.choice, 1)
+          && bumped(tallyPath(uid), resource.data.choice, -1);
       }
 
       // Hidden until decided or everyone has voted; never shown to the applicant.
@@ -236,23 +265,7 @@ service cloud.firestore {
 
         // A vote by the requester: exactly one field +1 for a new ballot, or -1/+1 to
         // follow a changed ballot. The ballot rule checks membership and open status.
-        allow update: if onlyChanges(['yes', 'no']) && (
-          (createdNow(ballotPath(uid, request.auth.uid))
-            && tallyMoved(getAfter(ballotPath(uid, request.auth.uid)).data.choice, 1)
-            && tallyMoved(otherChoice(getAfter(ballotPath(uid, request.auth.uid)).data.choice), 0))
-          || (exists(ballotPath(uid, request.auth.uid))
-            && get(ballotPath(uid, request.auth.uid)).data.choice
-               != getAfter(ballotPath(uid, request.auth.uid)).data.choice
-            && tallyMoved(getAfter(ballotPath(uid, request.auth.uid)).data.choice, 1)
-            && tallyMoved(get(ballotPath(uid, request.auth.uid)).data.choice, -1)));
-
-        function tallyMoved(field, by) {
-          return request.resource.data[field] == resource.data[field] + by;
-        }
-
-        function otherChoice(c) {
-          return c == 'yes' ? 'no' : 'yes';
-        }
+        allow update: if tallyFollowsBallot(ballotPath(uid, request.auth.uid), 'yes', 'no');
       }
     }
 
@@ -264,6 +277,16 @@ service cloud.firestore {
 
     function betTallyPath(betId) {
       return /databases/$(database)/documents/bets/$(betId)/tally/counts;
+    }
+
+    function betBallotPath(betId, v) {
+      return /databases/$(database)/documents/bets/$(betId)/ballots/$(v);
+    }
+
+    // An anonymous bet that is open for votes.
+    function anonVoting(betId) {
+      return get(betPath(betId)).data.voteStyle == 'anonymous'
+        && get(betPath(betId)).data.status == 'voting';
     }
 
     match /bets/{betId} {
@@ -281,7 +304,8 @@ service cloud.firestore {
 
       // One named predicate per transition. The admin's mark paid is his blanket update.
       allow update: if isMember()
-        && (accepting() || callingIt() || votingOpen() || settlingOpen() || markingPaid());
+        && (accepting() || callingIt() || votingOpen() || settlingOpen()
+          || votingAnon() || settlingAnon() || markingPaid());
 
       // Decline (side B) or cancel (side A) while proposed. An anonymous bet's tally goes
       // in the same batch, so no orphan tally is left behind.
@@ -372,6 +396,35 @@ service cloud.firestore {
             || (d.winner == 'B' && resource.data.votesB.size() * 2 > memberCount()));
       }
 
+      // Anonymous vote, bet side: voters gains exactly the voter's own key (value true) and
+      // voterCount +1, alongside her ballot being created (whose rule checks the tally).
+      function votingAnon() {
+        let me = request.auth.uid;
+        let v = request.resource.data.voters;
+        return resource.data.voteStyle == 'anonymous'
+          && resource.data.status == 'voting'
+          && onlyChanges(['voters', 'voterCount'])
+          && v is map
+          && v.diff(resource.data.voters).affectedKeys().hasOnly([me])
+          && !(me in resource.data.voters)
+          && me in v
+          && v[me] == true
+          && request.resource.data.voterCount == resource.data.voterCount + 1
+          && createdNow(betBallotPath(betId, me));
+      }
+
+      // Any member settles an anonymous bet: voting -> settled with a strict majority in the
+      // pre-batch tally (get, not getAfter) against the live member count.
+      function settlingAnon() {
+        let d = request.resource.data;
+        return resource.data.voteStyle == 'anonymous'
+          && resource.data.status == 'voting'
+          && onlyChanges(['status', 'winner'])
+          && d.status == 'settled'
+          && ((d.winner == 'A' && get(betTallyPath(betId)).data.A * 2 > memberCount())
+            || (d.winner == 'B' && get(betTallyPath(betId)).data.B * 2 > memberCount()));
+      }
+
       // The winner marks it paid: settled -> paid, nothing else changes.
       function markingPaid() {
         return onlyChanges(['status'])
@@ -381,15 +434,40 @@ service cloud.firestore {
             || (resource.data.winner == 'B' && isSelf(resource.data.sideB)));
       }
 
+      // One ballot per member, id = her uid. Only she (and the admin) can read it.
       match /ballots/{v} {
         allow read: if isAdmin() || isSelf(v);
         // The admin cannot vote, so no admin write to a ballot under the admin's own uid.
         allow write: if isAdmin() && !isSelf(v);
+
+        // New vote: ballot + voters key + voterCount +1 + chosen tally field +1.
+        allow create: if isSelf(v) && isMember()
+          && hasExactly(['choice'])
+          && request.resource.data.choice in ['A', 'B']
+          && anonVoting(betId)
+          && getAfter(betPath(betId)).data.voterCount == get(betPath(betId)).data.voterCount + 1
+          && v in getAfter(betPath(betId)).data.voters
+          && bumped(betTallyPath(betId), request.resource.data.choice, 1);
+
+        // Changed vote: old choice -1, new choice +1 (the tally rule pins the rest).
+        allow update: if isSelf(v) && isMember()
+          && onlyChanges(['choice'])
+          && request.resource.data.choice in ['A', 'B']
+          && request.resource.data.choice != resource.data.choice
+          && anonVoting(betId)
+          && bumped(betTallyPath(betId), request.resource.data.choice, 1)
+          && bumped(betTallyPath(betId), resource.data.choice, -1);
       }
 
+      // Hidden until decided or everyone has voted.
       match /tally/counts {
-        allow read: if isAdmin();
+        allow read: if isAdmin() || (isMember() && (
+          get(betPath(betId)).data.status in ['settled', 'paid', 'void']
+          || get(betPath(betId)).data.voterCount >= memberCount()));
         allow write: if isAdmin();
+
+        // A vote by the requester; the ballot rule checks membership and voting status.
+        allow update: if tallyFollowsBallot(betBallotPath(betId, request.auth.uid), 'A', 'B');
 
         // Propose, anonymous: the zero tally is created with its bet in the same batch.
         allow create: if isMember()
