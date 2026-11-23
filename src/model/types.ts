@@ -47,10 +47,16 @@ export type VoteStyle = 'open' | 'anonymous';
 /** bets/{betId} */
 export interface BetDoc {
   description: string;
-  /** Always the creator. */
-  sideA: Uid;
-  sideB: Uid;
-  subject: string | null;
+  /** The proposer first. Never empty while proposed; emptied only by a move that voids the bet. */
+  sideA: Uid[];
+  /** May be empty while proposed (an open challenge). */
+  sideB: Uid[];
+  /** Who the bet is about. Never on a side. Replaces the old single `subject`. */
+  subjects: Uid[];
+  /** People on a side who are in. Starts as [proposer]. */
+  confirmed: Uid[];
+  /** Winners who marked themselves paid. Starts empty. */
+  paidBy: Uid[];
   /** What side A owes if A loses. */
   stakeA: string;
   stakeB: string;

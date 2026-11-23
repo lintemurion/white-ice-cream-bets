@@ -318,6 +318,37 @@ service cloud.firestore {
       return /databases/$(database)/documents/bets/$(betId)/ballots/$(v);
     }
 
+    // No one appears twice in list `l`.
+    function noDups(l) {
+      return l.toSet().size() == l.size();
+    }
+
+    // Lists `x` and `y` share no one.
+    function disjoint(x, y) {
+      return x.toSet().intersection(y.toSet()).size() == 0;
+    }
+
+    // The people on a bet: three duplicate-free, pairwise disjoint lists of at most 8 people.
+    function validLineup(a, b, s) {
+      return a is list && b is list && s is list
+        && noDups(a) && noDups(b) && noDups(s)
+        && disjoint(a, b) && disjoint(s, a) && disjoint(s, b)
+        && a.size() + b.size() + s.size() <= 8;
+    }
+
+    // `after` is `before` with only `me` added or removed (others keep their order).
+    function onlyMeChanged(before, after, me) {
+      return after is list && after.removeAll([me]) == before.removeAll([me]);
+    }
+
+    // The status a proposed bet must take after a member move (src/model/bet.ts nextStatus):
+    // void if side A is empty; active if both sides have people and all are confirmed.
+    function nextStatus(a, b, c) {
+      return a.size() == 0 ? 'void'
+        : (b.size() > 0 && c.hasAll(a.concat(b))) ? 'active'
+        : 'proposed';
+    }
+
     // An anonymous bet that is open for votes.
     function anonVoting(betId) {
       return get(betPath(betId)).data.voteStyle == 'anonymous'
@@ -334,20 +365,14 @@ service cloud.firestore {
       allow delete: if isAdmin()
         && (resource.data.voteStyle != 'anonymous' || !existsAfter(betTallyPath(betId)));
 
-      // Propose. Side A is the creator. Anonymous bets create their zero tally in this batch.
+      // Propose. The creator is on side A. Anonymous bets create their zero tally in this batch.
       allow create: if isMember() && proposing();
 
       // One named predicate per transition. The admin's mark paid is his blanket update.
+      // Members never delete bets: leaving as the last on side A voids the bet instead.
       allow update: if isMember()
-        && (accepting() || callingIt() || votingOpen() || settlingOpen()
+        && (moving() || callingIt() || votingOpen() || settlingOpen()
           || votingAnon() || settlingAnon() || markingPaid());
-
-      // Decline (side B) or cancel (side A) while proposed. An anonymous bet's tally goes
-      // in the same batch, so no orphan tally is left behind.
-      allow delete: if isMember()
-        && resource.data.status == 'proposed'
-        && (isSelf(resource.data.sideA) || isSelf(resource.data.sideB))
-        && (resource.data.voteStyle != 'anonymous' || !existsAfter(betTallyPath(betId)));
 
       function hasAdminVote() {
         let d = request.resource.data;
@@ -358,19 +383,16 @@ service cloud.firestore {
 
       function proposing() {
         let d = request.resource.data;
-        return hasExactly(['description', 'sideA', 'sideB', 'subject', 'stakeA', 'stakeB',
-            'voteStyle', 'status', 'winner', 'createdBy', 'createdAt',
+        return hasExactly(['description', 'sideA', 'sideB', 'subjects', 'confirmed', 'paidBy',
+            'stakeA', 'stakeB', 'voteStyle', 'status', 'winner', 'createdBy', 'createdAt',
             'votesA', 'votesB', 'voters', 'voterCount'])
-          && d.sideA == request.auth.uid
+          && validLineup(d.sideA, d.sideB, d.subjects)
+          && request.auth.uid in d.sideA
           && d.createdBy == request.auth.uid
-          && d.sideB is string
-          && d.sideB != d.sideA
-          && isMemberUid(d.sideB)
-          && (d.subject == null
-            || (d.subject is string
-              && d.subject != d.sideA
-              && d.subject != d.sideB
-              && isMemberUid(d.subject)))
+          && d.confirmed == [request.auth.uid]
+          && d.paidBy == []
+          // One read checks everyone named; a missing member list fails the propose.
+          && memberUids().keys().hasAll(d.sideA.concat(d.sideB).concat(d.subjects))
           && validText(d.description, 2000)
           && validText(d.stakeA, 500)
           && validText(d.stakeB, 500)
@@ -386,12 +408,30 @@ service cloud.firestore {
           && (d.voteStyle == 'open' || createdNow(betTallyPath(betId)));
       }
 
-      // Side B accepts: proposed -> active, nothing else changes.
-      function accepting() {
-        return isSelf(resource.data.sideB)
-          && onlyChanges(['status'])
-          && resource.data.status == 'proposed'
-          && request.resource.data.status == 'active';
+      // Join, switch, leave, or I'm in, while proposed. Each list changes only by the mover's
+      // own id; joining or switching onto a side also marks her in; subjects can't move;
+      // confirmed holds only people on a side; and status is set to what the new lineup
+      // demands (nextStatus), so the write that completes the bet makes it active and the
+      // write that empties side A voids it.
+      function moving() {
+        let me = request.auth.uid;
+        let o = resource.data;
+        let a = request.resource.data.sideA;
+        let b = request.resource.data.sideB;
+        let c = request.resource.data.confirmed;
+        return o.status == 'proposed'
+          && onlyChanges(['sideA', 'sideB', 'confirmed', 'status'])
+          && !(me in o.subjects)
+          && onlyMeChanged(o.sideA, a, me)
+          && onlyMeChanged(o.sideB, b, me)
+          && onlyMeChanged(o.confirmed, c, me)
+          && validLineup(a, b, o.subjects)
+          && noDups(c)
+          && a.concat(b).toSet().hasAll(c)
+          && (!(me in a) || me in o.sideA || me in c)
+          && (!(me in b) || me in o.sideB || me in c)
+          && request.resource.data.status == nextStatus(a, b, c)
+          && me in memberUids();
       }
 
       // Any member calls it: active -> voting, nothing else changes.
@@ -510,12 +550,6 @@ service cloud.firestore {
           && createdNow(betPath(betId))
           && getAfter(betPath(betId)).data.voteStyle == 'anonymous'
           && getAfter(betPath(betId)).data.status == 'proposed';
-
-        // Decline or cancel, anonymous: deleted only alongside its proposed bet, by a side.
-        allow delete: if isMember()
-          && !existsAfter(betPath(betId))
-          && get(betPath(betId)).data.status == 'proposed'
-          && (isSelf(get(betPath(betId)).data.sideA) || isSelf(get(betPath(betId)).data.sideB));
       }
     }
 

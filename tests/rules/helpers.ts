@@ -48,9 +48,11 @@ export interface Fixture {
 export function betDoc(overrides: Partial<BetDoc> = {}): BetDoc {
   return {
     description: 'Test bet',
-    sideA: 'ava',
-    sideB: 'jo',
-    subject: null,
+    sideA: ['ava'],
+    sideB: ['jo'],
+    subjects: [],
+    confirmed: ['ava'],
+    paidBy: [],
     stakeA: '$5',
     stakeB: '$5',
     voteStyle: 'open',
