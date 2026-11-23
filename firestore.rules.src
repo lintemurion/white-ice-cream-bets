@@ -52,6 +52,15 @@ service cloud.firestore {
       return /databases/$(database)/documents/group/main;
     }
 
+    function membersPath() {
+      return /databases/$(database)/documents/group/members;
+    }
+
+    // Every current member's uid as a map key, so one lookup checks a whole list of people.
+    function memberUids() {
+      return get(membersPath()).data.uids;
+    }
+
     function joinPath(uid) {
       return /databases/$(database)/documents/joinRequests/$(uid);
     }
@@ -142,6 +151,27 @@ service cloud.firestore {
         && getAfter(userPath(request.resource.data.lastAdmitted)).data.status == 'member';
     }
 
+    // The member list: uids as keys, value true. Members may only add the uid admitted in
+    // this same batch (group/main's lastAdmitted, going pending -> member). The users rule
+    // in turn requires that key, so the list, memberCount, and statuses move together.
+    match /group/members {
+      allow read: if isAdmin() || isMember();
+      allow write: if isAdmin();
+      allow update: if isMember() && addingAdmitted();
+
+      function addingAdmitted() {
+        let x = getAfter(groupPath()).data.lastAdmitted;
+        let uids = request.resource.data.uids;
+        return onlyChanges(['uids'])
+          && x is string
+          && uids is map
+          && uids.diff(resource.data.uids).affectedKeys() == [x].toSet()
+          && uids[x] == true
+          && get(userPath(x)).data.status == 'pending'
+          && getAfter(userPath(x)).data.status == 'member';
+      }
+    }
+
     // ---------- Users ----------
 
     match /users/{uid} {
@@ -163,8 +193,9 @@ service cloud.firestore {
           && resource.data.status in ['pending', 'member']
           && onlyChanges(['displayName'])
           && validName(request.resource.data.displayName))
-        // Approve: pending -> member alongside the request going open -> approved and
-        // group/main gaining exactly one member, recorded as this uid.
+        // Approve: pending -> member alongside the request going open -> approved,
+        // group/main gaining exactly one member recorded as this uid, and this uid
+        // being added to group/members in this same batch.
         || (isMember()
           && onlyChanges(['status'])
           && resource.data.status == 'pending'
@@ -172,7 +203,9 @@ service cloud.firestore {
           && get(joinPath(uid)).data.status == 'open'
           && getAfter(joinPath(uid)).data.status == 'approved'
           && getAfter(groupPath()).data.memberCount == memberCount() + 1
-          && getAfter(groupPath()).data.lastAdmitted == uid)
+          && getAfter(groupPath()).data.lastAdmitted == uid
+          && !(uid in memberUids())
+          && uid in getAfter(membersPath()).data.uids)
         // Reject: pending -> rejected alongside the request going open -> rejected.
         || (isMember()
           && onlyChanges(['status'])

@@ -12,7 +12,18 @@ import {
   type Transaction,
 } from 'firebase/firestore';
 import { planRemoval, type RemovalInput, type Write } from '../model/removal';
-import type { Ballot, BetDoc, BetTally, GroupDoc, JoinRequestDoc, JoinTally, Side, Uid, UserDoc } from '../model/types';
+import type {
+  Ballot,
+  BetDoc,
+  BetTally,
+  GroupDoc,
+  JoinRequestDoc,
+  JoinTally,
+  MembersDoc,
+  Side,
+  Uid,
+  UserDoc,
+} from '../model/types';
 import { cleanText } from './errors';
 
 // The admin's writes are unconstrained by the rules (except that he can never vote), so
@@ -24,13 +35,16 @@ const DESCRIPTION_MAX = 2000;
 const STAKE_MAX = 500;
 
 const GROUP = 'group/main';
+const MEMBERS = 'group/members';
 
-/** Creates group/main with no members if it does not exist yet. */
+/** Creates group/main and group/members with no members, each only if it does not exist yet. */
 export async function initGroup(db: Firestore): Promise<void> {
   const ref = doc(db, GROUP);
+  const membersRef = doc(db, MEMBERS);
   await runTransaction(db, async (tx) => {
-    if ((await tx.get(ref)).exists()) return;
-    tx.set(ref, { memberCount: 0, lastAdmitted: null } satisfies GroupDoc);
+    const [group, members] = await Promise.all([tx.get(ref), tx.get(membersRef)]);
+    if (!group.exists()) tx.set(ref, { memberCount: 0, lastAdmitted: null } satisfies GroupDoc);
+    if (!members.exists()) tx.set(membersRef, { uids: {} } satisfies MembersDoc);
   });
 }
 
@@ -44,7 +58,8 @@ async function requireStatus(tx: Transaction, db: Firestore, uid: Uid, status: U
 
 /**
  * Admits a pending user directly, in the same shape as a member's approve batch: request
- * approved, user member, memberCount +1 and lastAdmitted. Founding members come in this way.
+ * approved, user member, memberCount +1 and lastAdmitted, and her key in group/members
+ * (created if missing). Founding members come in this way.
  */
 export async function adminApprove(db: Firestore, uid: Uid): Promise<void> {
   await runTransaction(db, async (tx) => {
@@ -55,6 +70,7 @@ export async function adminApprove(db: Firestore, uid: Uid): Promise<void> {
     if (req.exists()) tx.update(req.ref, { status: 'approved' });
     tx.update(doc(db, `users/${uid}`), { status: 'member' });
     tx.update(doc(db, GROUP), { memberCount: group.memberCount + 1, lastAdmitted: uid });
+    tx.set(doc(db, MEMBERS), { uids: { [uid]: true } }, { merge: true });
   });
 }
 

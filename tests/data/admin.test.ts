@@ -54,15 +54,28 @@ async function ids(path: string) {
 const as = (uid: string) => dbAs(env, uid);
 
 describe('admin data layer', () => {
-  it('initGroup creates group/main once', async () => {
+  it('initGroup creates group/main and group/members once', async () => {
     await initGroup(admin);
     expect(await peek('group/main')).toEqual({ memberCount: 0, lastAdmitted: null });
+    expect(await peek('group/members')).toEqual({ uids: {} });
 
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore() as unknown as Firestore;
+      await setDoc(doc(db, 'group/main'), { memberCount: 3, lastAdmitted: 'ava' });
+      await setDoc(doc(db, 'group/members'), { uids: { ava: true } });
+    });
+    await initGroup(admin);
+    expect(await peek('group/main')).toEqual({ memberCount: 3, lastAdmitted: 'ava' });
+    expect(await peek('group/members')).toEqual({ uids: { ava: true } });
+  });
+
+  it('initGroup adds a missing group/members next to an existing group/main', async () => {
     await env.withSecurityRulesDisabled((ctx) =>
       setDoc(doc(ctx.firestore() as unknown as Firestore, 'group/main'), { memberCount: 3, lastAdmitted: 'ava' }),
     );
     await initGroup(admin);
     expect(await peek('group/main')).toEqual({ memberCount: 3, lastAdmitted: 'ava' });
+    expect(await peek('group/members')).toEqual({ uids: {} });
   });
 
   it('adminApprove makes a pending user a member and bumps memberCount', async () => {
@@ -72,6 +85,7 @@ describe('admin data layer', () => {
     expect(await peek('users/ava')).toMatchObject({ status: 'member' });
     expect(await peek('joinRequests/ava')).toMatchObject({ status: 'approved' });
     expect(await peek('group/main')).toEqual({ memberCount: 1, lastAdmitted: 'ava' });
+    expect(await peek('group/members')).toEqual({ uids: { ava: true } });
 
     // Not pending any more: a second approve does not count her twice.
     await expect(adminApprove(admin, 'ava')).rejects.toThrow(/pending/);
@@ -84,6 +98,7 @@ describe('admin data layer', () => {
     expect(await peek('users/riley')).toMatchObject({ status: 'rejected' });
     expect(await peek('joinRequests/riley')).toMatchObject({ status: 'rejected' });
     expect(await peek('group/main')).toMatchObject({ memberCount: 6 });
+    expect(await peek('group/members')).not.toHaveProperty('uids.riley');
   });
 
   it('clearRejection lets a rejected user request again', async () => {

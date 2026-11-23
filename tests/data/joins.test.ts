@@ -44,6 +44,9 @@ describe('joins data layer', () => {
     expect(await tryDecideJoin(as('sam'), 'riley')).toBe('approved');
 
     expect(await peek('group/main')).toEqual({ memberCount: 7, lastAdmitted: 'riley' });
+    expect(await peek('group/members')).toEqual({
+      uids: Object.fromEntries([...MEMBERS, 'riley'].map((u) => [u, true])),
+    });
     expect(await peek('users/riley')).toMatchObject({ status: 'member' });
     expect(await peek('joinRequests/riley')).toMatchObject({ status: 'approved', voterCount: 4 });
     // Already decided: a second attempt returns null quietly.

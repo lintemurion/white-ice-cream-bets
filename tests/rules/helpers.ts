@@ -66,7 +66,7 @@ export function betDoc(overrides: Partial<BetDoc> = {}): BetDoc {
   };
 }
 
-/** Writes the fixture with security rules disabled. */
+/** Writes the fixture with security rules disabled. group/members lists every seeded member. */
 export async function seed(env: RulesTestEnvironment, f: Fixture): Promise<void> {
   await env.withSecurityRulesDisabled(async (ctx) => {
     const db = ctx.firestore() as unknown as Firestore;
@@ -77,6 +77,7 @@ export async function seed(env: RulesTestEnvironment, f: Fixture): Promise<void>
     const members = f.members ?? [];
     const writes: Promise<void>[] = [
       put('group/main', { memberCount: members.length, lastAdmitted: null }),
+      put('group/members', { uids: Object.fromEntries(members.map((uid) => [uid, true])) }),
       ...members.map((uid) => user(uid, 'member')),
       ...(f.rejected ?? []).map((uid) => user(uid, 'rejected')),
       ...(f.former ?? []).map((uid) => user(uid, 'former')),

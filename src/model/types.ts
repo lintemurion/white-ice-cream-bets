@@ -17,6 +17,11 @@ export interface GroupDoc {
   lastAdmitted: Uid | null;
 }
 
+/** group/members: every current member's uid as a key. Members only; admission adds a key. */
+export interface MembersDoc {
+  uids: Record<Uid, true>;
+}
+
 export type JoinStatus = 'open' | 'approved' | 'rejected';
 
 /** joinRequests/{uid} */

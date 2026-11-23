@@ -2,6 +2,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { assertFails, assertSucceeds, type RulesTestEnvironment } from '@firebase/rules-unit-testing';
 import {
   collection,
+  deleteDoc,
+  deleteField,
   doc,
   getDoc,
   getDocs,
@@ -70,7 +72,18 @@ function changeJoinVote(db: Firestore, voter: string, applicant: string, from: '
   return b.commit();
 }
 
-function approve(db: Firestore, applicant: string, o: { bump?: number; lastAdmitted?: string } = {}) {
+interface ApproveOpts {
+  bump?: number;
+  lastAdmitted?: string;
+  /** Keys added to group/members.uids; false leaves group/members out of the batch. */
+  add?: string[] | false;
+  /** A key removed from group/members.uids in the same write. */
+  remove?: string;
+  value?: unknown;
+}
+
+/** The exact approve batch the client sends, with knobs to break it. */
+function approve(db: Firestore, applicant: string, o: ApproveOpts = {}) {
   const b = writeBatch(db);
   b.update(doc(db, `joinRequests/${applicant}`), { status: 'approved' });
   b.update(doc(db, `users/${applicant}`), { status: 'member' });
@@ -78,6 +91,13 @@ function approve(db: Firestore, applicant: string, o: { bump?: number; lastAdmit
     memberCount: increment(o.bump ?? 1),
     lastAdmitted: o.lastAdmitted ?? applicant,
   });
+  const add = o.add ?? [applicant];
+  if (add !== false) {
+    const patch: Record<string, unknown> = {};
+    for (const uid of add) patch[`uids.${uid}`] = o.value ?? true;
+    if (o.remove) patch[`uids.${o.remove}`] = deleteField();
+    b.update(doc(db, 'group/members'), patch);
+  }
   return b.commit();
 }
 
@@ -280,6 +300,7 @@ describe('admission', () => {
     b.update(doc(db, 'joinRequests/riley'), { status: 'approved' });
     b.update(doc(db, 'users/riley'), { status: 'member' });
     b.update(doc(db, 'group/main'), { memberCount: increment(1), lastAdmitted: 'riley' });
+    b.update(doc(db, 'group/members'), { 'uids.riley': true });
     await assertFails(b.commit());
     // Done as two writes, the same steps succeed.
     await assertSucceeds(changeJoinVote(db, 'priya', 'riley', 'no', 'yes'));
@@ -296,6 +317,7 @@ describe('admission', () => {
       b.update(doc(db, `users/${uid}`), { status: 'member' });
     }
     b.update(doc(db, 'group/main'), { memberCount: increment(1), lastAdmitted: 'riley' });
+    b.update(doc(db, 'group/members'), { 'uids.riley': true, 'uids.pia': true });
     await assertFails(b.commit());
   });
 
@@ -305,6 +327,7 @@ describe('admission', () => {
     const b = writeBatch(db);
     b.update(doc(db, 'users/riley'), { status: 'member' });
     b.update(doc(db, 'group/main'), { memberCount: increment(1), lastAdmitted: 'riley' });
+    b.update(doc(db, 'group/members'), { 'uids.riley': true });
     await assertFails(b.commit());
   });
 
@@ -323,6 +346,104 @@ describe('admission', () => {
 
   it('admin can approve directly', async () => {
     await assertSucceeds(approve(dbAs(env, 'admin'), 'riley'));
+  });
+});
+
+describe('member list (group/members)', () => {
+  const yes4 = { yes: 4, no: 0 };
+  const allUids = (extra: string[] = []) =>
+    Object.fromEntries([...MEMBERS, ...extra].map((u) => [u, true]));
+
+  it('approve batch must also add the admitted uid to group/members', async () => {
+    await voteAll(['yes', 'yes', 'yes', 'yes']);
+    await assertFails(approve(dbAs(env, 'jo'), 'riley', { add: false }));
+    expect(await peek('users/riley')).toMatchObject({ status: 'pending' });
+  });
+
+  it('approve batch with members add succeeds; members doc has the new key', async () => {
+    await voteAll(['yes', 'yes', 'yes', 'yes']);
+    await assertSucceeds(approve(dbAs(env, 'jo'), 'riley'));
+    expect(await peek('group/members')).toEqual({ uids: allUids(['riley']) });
+  });
+
+  it('cannot add a different uid, or two uids, to group/members', async () => {
+    await seed(env, { members: MEMBERS, pending: ['riley', 'pia'], joinTallies: { riley: yes4 } });
+    const db = dbAs(env, 'jo');
+    await assertFails(approve(db, 'riley', { add: ['pia'] }));
+    await assertFails(approve(db, 'riley', { add: ['riley', 'pia'] }));
+    await assertFails(approve(db, 'riley', { add: ['riley', 'outsider'] }));
+    await assertFails(approve(db, 'riley', { value: 'yes' }));
+    expect(await peek('group/members')).toEqual({ uids: allUids() });
+  });
+
+  it('cannot add to group/members without the admission', async () => {
+    await seed(env, { members: MEMBERS, pending: ['riley'], joinTallies: { riley: yes4 } });
+    const db = dbAs(env, 'jo');
+    await assertFails(updateDoc(doc(db, 'group/members'), { 'uids.riley': true }));
+    await assertFails(updateDoc(doc(db, 'group/members'), { 'uids.outsider': true }));
+    await assertFails(updateDoc(doc(dbAs(env, 'riley'), 'group/members'), { 'uids.riley': true }));
+    // With group/main moved but users/riley left pending.
+    const b = writeBatch(db);
+    b.update(doc(db, 'group/main'), { memberCount: increment(1), lastAdmitted: 'riley' });
+    b.update(doc(db, 'group/members'), { 'uids.riley': true });
+    await assertFails(b.commit());
+  });
+
+  it('a stale lastAdmitted does not let a member re-add that uid to group/members', async () => {
+    // fay was the last admitted and has since been removed (former); riley is pending.
+    await seed(env, { members: MEMBERS, pending: ['riley'], former: ['fay'], joinTallies: { riley: yes4 } });
+    for (const stale of ['fay', 'riley']) {
+      await env.withSecurityRulesDisabled((ctx) =>
+        updateDoc(doc(ctx.firestore() as unknown as Firestore, 'group/main'), { lastAdmitted: stale }),
+      );
+      await assertFails(updateDoc(doc(dbAs(env, 'jo'), 'group/members'), { [`uids.${stale}`]: true }));
+    }
+    expect(await peek('group/members')).toEqual({ uids: allUids() });
+
+    // ava is a member whose key is missing; lastAdmitted names her. Only admission adds keys.
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore() as unknown as Firestore;
+      await updateDoc(doc(db, 'group/main'), { lastAdmitted: 'ava' });
+      await updateDoc(doc(db, 'group/members'), { 'uids.ava': deleteField() });
+    });
+    await assertFails(updateDoc(doc(dbAs(env, 'jo'), 'group/members'), { 'uids.ava': true }));
+  });
+
+  it('a key already in group/members does not let approve skip the members write', async () => {
+    await seed(env, { members: MEMBERS, pending: ['riley'], joinTallies: { riley: yes4 } });
+    await env.withSecurityRulesDisabled((ctx) =>
+      updateDoc(doc(ctx.firestore() as unknown as Firestore, 'group/members'), { 'uids.riley': true }),
+    );
+    await assertFails(approve(dbAs(env, 'jo'), 'riley', { add: false }));
+    await assertFails(approve(dbAs(env, 'jo'), 'riley'));
+    expect(await peek('users/riley')).toMatchObject({ status: 'pending' });
+  });
+
+  it('cannot remove a key from group/members as a member', async () => {
+    await seed(env, { members: MEMBERS, pending: ['riley'], joinTallies: { riley: yes4 } });
+    const db = dbAs(env, 'jo');
+    await assertFails(updateDoc(doc(db, 'group/members'), { 'uids.ava': deleteField() }));
+    await assertFails(setDoc(doc(db, 'group/members'), { uids: {} }));
+    await assertFails(approve(db, 'riley', { remove: 'ava' }));
+    await assertFails(updateDoc(doc(db, 'group/members'), { 'uids.extra': true, other: 1 }));
+    expect(await peek('group/members')).toEqual({ uids: allUids() });
+  });
+
+  it('members cannot create or delete group/members', async () => {
+    await env.withSecurityRulesDisabled((ctx) =>
+      deleteDoc(doc(ctx.firestore() as unknown as Firestore, 'group/members')),
+    );
+    await assertFails(setDoc(doc(dbAs(env, 'jo'), 'group/members'), { uids: { jo: true } }));
+    await seed(env, { members: MEMBERS });
+    await assertFails(deleteDoc(doc(dbAs(env, 'jo'), 'group/members')));
+  });
+
+  it('admin can write group/members directly', async () => {
+    const db = dbAs(env, 'admin');
+    await assertSucceeds(updateDoc(doc(db, 'group/members'), { 'uids.ava': deleteField() }));
+    await assertSucceeds(setDoc(doc(db, 'group/members'), { uids: { jo: true } }));
+    await assertSucceeds(deleteDoc(doc(db, 'group/members')));
+    await assertSucceeds(setDoc(doc(db, 'group/members'), { uids: {} }));
   });
 });
 
