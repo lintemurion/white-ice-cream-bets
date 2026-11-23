@@ -1,11 +1,13 @@
 // Generates firestore.rules from firestore.rules.src, substituting the admin email.
-// Deploy mode (default): the email comes from VITE_ADMIN_EMAIL in .env.local and the
-// output is firestore.rules. Fails loudly if the email is missing.
+// Deploy mode (default): the email comes from the VITE_ADMIN_EMAIL environment variable
+// (set by CI), falling back to .env.local, and the output is firestore.rules. Fails loudly
+// if the email is missing.
 // Test mode (--test): uses the fixed test admin email and writes .emulator/firestore.rules,
 // which firebase.test.json points the emulator at.
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { resolveAdminEmail } from './lib/deploy-config.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const envPath = join(root, '.env.local');
@@ -19,15 +21,16 @@ function fail(msg) {
 }
 
 function deployEmail() {
-  if (!existsSync(envPath)) fail('.env.local not found; copy .env.example and set VITE_ADMIN_EMAIL');
-  const match = readFileSync(envPath, 'utf8').match(/^\s*VITE_ADMIN_EMAIL\s*=\s*(.*?)\s*$/m);
-  return match?.[1].replace(/^(['"])(.*)\1$/, '$2').trim();
+  const envLocalText = existsSync(envPath) ? readFileSync(envPath, 'utf8') : null;
+  try {
+    return resolveAdminEmail({ env: process.env, envLocalText });
+  } catch (err) {
+    fail(err.message);
+  }
 }
 
-// Lowercased: the rules compare against request.auth.token.email.lower().
-const email = (testMode ? TEST_ADMIN_EMAIL : deployEmail())?.toLowerCase();
-if (!email) fail('VITE_ADMIN_EMAIL is missing or empty in .env.local');
-if (!/^[^\s'"\@]+@[^\s'"\@]+$/.test(email)) fail(`VITE_ADMIN_EMAIL is not a plain email: ${email}`);
+// Lowercased: the rules compare against the lowercased token email.
+const email = testMode ? TEST_ADMIN_EMAIL : deployEmail();
 
 const src = readFileSync(join(root, 'firestore.rules.src'), 'utf8');
 if (!src.includes('__ADMIN_EMAIL__')) fail('firestore.rules.src has no __ADMIN_EMAIL__ placeholder');
