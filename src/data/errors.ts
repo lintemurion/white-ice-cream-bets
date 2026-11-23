@@ -17,7 +17,11 @@ export async function attempt(write: () => Promise<void>): Promise<boolean> {
   }
 }
 
-/** Trims `value` and checks it is 1 to `max` chars, matching the rules' validText. */
+/**
+ * Trims `value` and checks it is 1 to `max` chars, matching the rules' validText. Both count
+ * UTF-16 code units: the rules' string.size() measures the same as .length (an emoji counts
+ * as 2), pinned against the emulator in tests/data/text-limits.test.ts.
+ */
 export function cleanText(value: string, max: number, label: string): string {
   const s = value.trim();
   if (s.length < 1) throw new Error(`${label} cannot be blank`);
