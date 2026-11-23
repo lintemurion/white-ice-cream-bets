@@ -35,7 +35,7 @@ export function JoinRequestCard(props: {
     <section class="card join">
       <p class="title">{props.req.displayName} wants to join</p>
       <p class="progress">{props.req.voterCount} of {props.memberCount} voted</p>
-      {props.voterNames && props.voterNames.length > 0 && <p>Voted: {props.voterNames.join(', ')}</p>}
+      {props.voterNames && props.voterNames.length > 0 && <p class="voted">Voted: {props.voterNames.join(', ')}</p>}
       <div class="row">
         {(['yes', 'no'] as const).map((c) => (
           <button

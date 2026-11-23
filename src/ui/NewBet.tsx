@@ -103,7 +103,7 @@ export function NewBet(props: {
           <Counter value={stakeMine} max={STAKE_MAX} />
         </label>
         <label>
-          {`If ${opponentName} loses:`}
+          {opponent === '' ? 'If they lose:' : `If ${opponentName} loses:`}
           <textarea
             rows={2}
             value={stakeTheirs}

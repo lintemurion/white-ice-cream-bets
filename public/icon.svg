@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- White Ice Cream Bets: a vanilla scoop with a drip on a waffle cone, on strawberry. -->
+  <rect width="512" height="512" rx="112" fill="#E0457B"/>
+  <!-- cone -->
+  <path d="M176 262 L336 262 L256 452 Z" fill="#E8B46A"/>
+  <g stroke="#C98A3C" stroke-width="9" stroke-linecap="round" fill="none">
+    <path d="M206 262 L282 392"/>
+    <path d="M246 262 L298 352"/>
+    <path d="M286 262 L314 312"/>
+    <path d="M306 262 L230 392"/>
+    <path d="M266 262 L214 352"/>
+    <path d="M226 262 L198 312"/>
+  </g>
+  <!-- scoop with drips -->
+  <path d="M152 250
+           C140 160 196 104 256 104
+           C316 104 372 160 360 250
+           C360 266 346 272 336 268
+           C326 264 324 280 324 300
+           C324 316 300 316 300 300
+           L300 276
+           C292 270 280 272 272 278
+           C262 286 250 286 240 278
+           C230 270 218 270 210 280
+           C210 316 186 316 186 296
+           L186 276
+           C176 270 164 272 158 266
+           C154 262 152 256 152 250 Z" fill="#FFFFFF"/>
+  <!-- shine -->
+  <path d="M196 176 C204 152 222 138 244 132" stroke="#F3E9FF" stroke-width="14" stroke-linecap="round" fill="none"/>
+  <!-- sprinkles -->
+  <g stroke-width="11" stroke-linecap="round">
+    <path d="M270 160 L288 150" stroke="#3FB8A0"/>
+    <path d="M308 196 L318 214" stroke="#E0457B"/>
+    <path d="M232 206 L250 214" stroke="#F2C14E"/>
+    <path d="M282 228 L300 232" stroke="#7A5CFA"/>
+    <path d="M198 230 L206 244" stroke="#3FB8A0"/>
+  </g>
+</svg>

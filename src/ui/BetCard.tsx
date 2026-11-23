@@ -112,7 +112,7 @@ export function BetCard(props: {
         <p class={`desc${clamp ? ' clamped' : ''}`}>{bet.description}</p>
         <p class={`stakes${clamp ? ' clamped' : ''}`}>{owesLine(bet, names)}</p>
         {bet.voteStyle === 'anonymous' && props.tally && (
-          <p>Final count: {nameA} {props.tally.A}, {nameB} {props.tally.B}</p>
+          <p class="tally">Final count: {nameA} {props.tally.A}, {nameB} {props.tally.B}</p>
         )}
         {bet.status === 'paid' && <p class="paid-note">Paid</p>}
         {bet.status === 'settled' && winnerUid === me && (
@@ -153,7 +153,7 @@ export function BetCard(props: {
         )}
         {bet.status === 'proposed' && bet.sideA === me && (
           <>
-            <p>Waiting for {nameB} to accept</p>
+            <p class="waiting">Waiting for {nameB} to accept</p>
             <div class="row">
               <button type="button" class="btn" disabled={busy} onClick={() => run(() => actions.cancel(id))}>
                 Cancel
@@ -177,8 +177,8 @@ export function BetCard(props: {
               </p>
             ) : (
               <>
-                <p>Voted: {Object.keys(bet.voters).map(nameOf).join(', ') || 'nobody yet'}</p>
-                {props.tally && <p>Counts: {nameA} {props.tally.A}, {nameB} {props.tally.B}</p>}
+                <p class="voted">Voted: {Object.keys(bet.voters).map(nameOf).join(', ') || 'nobody yet'}</p>
+                {props.tally && <p class="tally">Counts: {nameA} {props.tally.A}, {nameB} {props.tally.B}</p>}
               </>
             )}
             <p class="progress">

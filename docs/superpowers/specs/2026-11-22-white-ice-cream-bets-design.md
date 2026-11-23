@@ -5,7 +5,7 @@ Owner: Kyle (admin)
 
 ## Intent
 
-"White Ice Cream" is a friend group (Kyle's daughter and her friends, all 13 or older). They make friendly bets with each other and want one shared place to log them, decide who won, and keep track of who owes what. Each girl uses her own phone and needs to see the same live list.
+"White Ice Cream" is a friend group (Kyle's daughter and her friends, all over 21). They make friendly bets with each other and want one shared place to log them, decide who won, and keep track of who owes what. Each girl uses her own phone and needs to see the same live list.
 
 Success: the girls actually use it instead of losing track of bets in group texts, and nobody can cheat their way to a win.
 
@@ -35,7 +35,7 @@ Success: the girls actually use it instead of losing track of bets in group text
 ## Constraints
 
 - Platform: Firebase (Kyle's choice). Firebase Authentication with Google sign-in, Cloud Firestore, Firebase Hosting.
-- Google sign-in only. All users are 13+, so no Family Link supervision issues.
+- Google sign-in only. All users are adults (21+).
 - Phone-first layout; must also work on desktop.
 - Group size is small (around 6 to start; design for up to ~20).
 
