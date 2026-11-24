@@ -210,6 +210,15 @@ describe('Admin', () => {
     expect(await within(screen.getByTestId('pending-riley')).findByRole('alert')).toBeTruthy();
   });
 
+  it('shows the Upgrade-first message when Approve is refused before Upgrade data', async () => {
+    const actions = makeActions();
+    actions.approve = vi.fn().mockRejectedValue(new Error('Press Upgrade data first, then approve.'));
+    render(<Admin {...base(actions)} />);
+    const row = screen.getByTestId('pending-riley');
+    fireEvent.click(within(row).getByRole('button', { name: 'Approve' }));
+    expect((await within(row).findByRole('alert')).textContent).toBe('Press Upgrade data first, then approve.');
+  });
+
   it('has a Sign out button', () => {
     const actions = makeActions();
     render(<Admin {...base(actions)} />);

@@ -59,14 +59,16 @@ async function requireStatus(tx: Transaction, db: Firestore, uid: Uid, status: U
 
 /**
  * Admits a pending user directly, in the same shape as a member's approve batch: request
- * approved, user member, memberCount +1 and lastAdmitted, and her key in group/members
- * (created if missing). Founding members come in this way.
+ * approved, user member, memberCount +1 and lastAdmitted, and her key in group/members.
+ * Founding members come in this way. Refuses, writing nothing, if group/members is missing
+ * (Upgrade data hasn't run): a list holding only her would block everyone else's proposals.
  */
 export async function adminApprove(db: Firestore, uid: Uid): Promise<void> {
   await runTransaction(db, async (tx) => {
     await requireStatus(tx, db, uid, 'pending');
     const group = (await tx.get(doc(db, GROUP))).data() as GroupDoc | undefined;
     if (!group) throw new Error('group/main is missing; run initGroup first');
+    if (!(await tx.get(doc(db, MEMBERS))).exists()) throw new Error('Press Upgrade data first, then approve.');
     const req = await tx.get(doc(db, `joinRequests/${uid}`));
     if (req.exists()) tx.update(req.ref, { status: 'approved' });
     tx.update(doc(db, `users/${uid}`), { status: 'member' });
@@ -286,8 +288,9 @@ export async function adminDeleteBet(db: Firestore, betId: string): Promise<void
 }
 
 /**
- * Returns a settled or paid bet to voting with no winner and every vote cleared, so the
- * majority that settled it does not settle it again at once. Open: empty votesA and votesB.
+ * Returns a settled or paid bet to voting with no winner, nobody marked paid (so a re-settle
+ * can reach paid again), and every vote cleared, so the majority that settled it does not
+ * settle it again at once. Open: empty votesA and votesB.
  * Anonymous: every ballot deleted, tally zeroed, empty voters, voterCount 0. Ballots are
  * listed first; none can be added meanwhile, since a ballot needs the bet in voting.
  */
@@ -298,7 +301,7 @@ export async function adminReopenVote(db: Firestore, betId: string): Promise<voi
   await runTransaction(db, async (tx) => {
     const bet = (await tx.get(ref)).data() as BetDoc | undefined;
     if (bet?.status !== 'settled' && bet?.status !== 'paid') throw new Error('Only a settled or paid bet can be reopened');
-    tx.update(ref, { status: 'voting', winner: null, votesA: {}, votesB: {}, voters: {}, voterCount: 0 });
+    tx.update(ref, { status: 'voting', winner: null, paidBy: [], votesA: {}, votesB: {}, voters: {}, voterCount: 0 });
     if (bet.voteStyle === 'anonymous') {
       for (const d of ballots.docs) tx.delete(d.ref);
       tx.set(tallyRef, { A: 0, B: 0 } satisfies BetTally);

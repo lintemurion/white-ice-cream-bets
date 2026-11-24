@@ -16,7 +16,7 @@ import {
   renameUser,
   upgradeData,
 } from '../../src/data/admin';
-import { castAnonVote, castOpenVote, trySettle } from '../../src/data/bets';
+import { castAnonVote, castOpenVote, markIGotPaid, trySettle } from '../../src/data/bets';
 import { castJoinVote, requestToJoin } from '../../src/data/joins';
 import { dbAs, makeEnv, seed } from '../rules/helpers';
 
@@ -120,6 +120,18 @@ describe('admin data layer', () => {
     // Not pending any more: a second approve does not count her twice.
     await expect(adminApprove(admin, 'ava')).rejects.toThrow(/pending/);
     expect(await peek('group/main')).toMatchObject({ memberCount: 1 });
+  });
+
+  it('adminApprove refuses before Upgrade data (no group/members) and writes nothing', async () => {
+    await env.withSecurityRulesDisabled((ctx) =>
+      setDoc(doc(ctx.firestore() as unknown as Firestore, 'group/main'), { memberCount: 3, lastAdmitted: 'jo' }),
+    );
+    await requestToJoin(as('ava'), 'ava', 'Ava');
+    await expect(adminApprove(admin, 'ava')).rejects.toThrow('Press Upgrade data first, then approve.');
+    expect(await peek('group/members')).toBeUndefined();
+    expect(await peek('group/main')).toEqual({ memberCount: 3, lastAdmitted: 'jo' });
+    expect(await peek('users/ava')).toMatchObject({ status: 'pending' });
+    expect(await peek('joinRequests/ava')).toMatchObject({ status: 'open' });
   });
 
   it('adminReject rejects a pending user and leaves memberCount alone', async () => {
@@ -276,6 +288,35 @@ describe('admin data layer', () => {
     expect(await peek('bets/anon1')).toMatchObject({ voters: { ava: true }, voterCount: 1 });
     expect(await peek('bets/anon1/tally/counts')).toEqual({ A: 0, B: 1 });
     expect(await peek('bets/anon1/ballots/ava')).toEqual({ choice: 'B' });
+  });
+
+  it('adminReopenVote clears paidBy, so a re-settled paid team bet can be paid again on either side', async () => {
+    await seed(env, {
+      members: MEMBERS,
+      bets: { t1: { status: 'voting', sideA: ['ava', 'zoe'], sideB: ['jo', 'sam'], confirmed: ['ava', 'zoe', 'jo', 'sam'] } },
+    });
+    const settleFor = async (side: 'A' | 'B') => {
+      for (const m of ['ava', 'jo', 'maya', 'priya']) await castOpenVote(as(m), m, 't1', side);
+      expect(await trySettle(as('maya'), 't1')).toBe(side);
+    };
+    const winnersMarkPaid = async (winners: string[]) => {
+      for (const w of winners) await markIGotPaid(as(w), w, 't1');
+      expect(await peek('bets/t1')).toMatchObject({ status: 'paid', paidBy: winners });
+    };
+
+    await settleFor('A');
+    await winnersMarkPaid(['ava', 'zoe']);
+
+    // Reopen and settle for the same side: the winners can mark it paid again.
+    await adminReopenVote(admin, 't1');
+    expect(await peek('bets/t1')).toMatchObject({ status: 'voting', paidBy: [] });
+    await settleFor('A');
+    await winnersMarkPaid(['ava', 'zoe']);
+
+    // Reopen and settle for the other side: no old ids left behind.
+    await adminReopenVote(admin, 't1');
+    await settleFor('B');
+    await winnersMarkPaid(['jo', 'sam']);
   });
 
   it('adminClearVote on an anonymous bet keeps tally and voterCount consistent', async () => {

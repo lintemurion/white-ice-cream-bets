@@ -104,7 +104,7 @@ npx firebase deploy --project <project>
 
 Sign in with the admin email to get the admin page. The admin is never a member: no voting, no betting, never counted in a majority.
 
-- **Upgrade data (once, right after the team bets update deploys):** press **Upgrade data** on the admin page. It lists the current members for the rules and converts old bets to the new format. Until you do, members can't propose bets and votes to let new people in won't go through; they'll see "The group needs a quick upgrade. Ask Kyle." The button goes away when there's nothing left to upgrade.
+- **Upgrade data (once, right after the team bets update deploys):** press **Upgrade data** on the admin page. It lists the current members for the rules and converts old bets to the new format. Until you do, members can't propose bets and votes to let new people in won't go through; they'll see "The group needs a quick upgrade. Ask Kyle." Approving someone from the admin page is refused with "Press Upgrade data first, then approve." until then. The button goes away when there's nothing left to upgrade.
 
 - **Let someone in or keep them out:** under **Pending requests**, **Approve** or **Reject**. This skips the group vote.
 - **Let a rejected person ask again:** under **Rejected**, **Clear**. They can then sign in and request to join again.

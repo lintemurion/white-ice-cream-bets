@@ -32,7 +32,8 @@ A new bet waits until everyone on it has tapped **I'm in**. The card shows **Wai
 - **I'm in:** you agree to the bet. You're counted as in right away if you proposed it.
 - **Switch sides:** move to the other side.
 - **Leave:** step out of the bet. If the last person on the first side (the proposer's side) leaves, the bet is cancelled. If the other side empties, it becomes an open challenge.
-- **Join other side**, or **Join** and a name: if you're not on a bet and aren't someone it's about, you can join a side until the bet is on. An open challenge shows **(open challenge)** until someone joins against.
+- **Join other side**, or **Join** and a name: if you're not on a bet and aren't someone it's about, you can join a side until the bet is on. Bets you can join are listed under **OPEN TO JOIN** on the home screen, including open challenges, which show **(open challenge)** until someone joins against. A bet that already has 8 people isn't listed.
+- Joining or switching sides counts you as in automatically, so you don't need to tap **I'm in** afterwards.
 
 Once everyone is in and both sides have someone, the bet is on. From then on, the sides are locked: no joining, switching, or leaving.
 

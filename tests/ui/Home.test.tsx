@@ -38,4 +38,11 @@ describe('Home', () => {
     expect(screen.queryByText(EMPTY)).toBeNull();
     expect(screen.getByText('bet b1')).toBeTruthy();
   });
+
+  it('lists proposed bets I could join under OPEN TO JOIN', () => {
+    show([], sections('jo', [{ id: 'b2', bet: bet({ status: 'proposed', sideA: ['ava', 'sam'], sideB: ['lee'], confirmed: ['ava'] }) }]));
+    expect(screen.queryByText(EMPTY)).toBeNull();
+    expect(screen.getByText('OPEN TO JOIN')).toBeTruthy();
+    expect(screen.getByText('bet b2')).toBeTruthy();
+  });
 });
