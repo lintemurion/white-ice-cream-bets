@@ -14,7 +14,7 @@ import {
 } from 'firebase/firestore';
 import { isOldFormat, MAX_PEOPLE, nextStatus, normalizeBet, sideOf } from '../model/bet';
 import type { Ballot, BetDoc, Side, Uid, VoteStyle } from '../model/types';
-import { attempt, cleanText, isPermissionDenied } from './errors';
+import { attempt, cleanText, isPermissionDenied, NEEDS_MEMBER_LIST } from './errors';
 
 export type NewBetInput = {
   description: string;
@@ -34,7 +34,6 @@ export type NewBetInput = {
 const DESCRIPTION_MAX = 2000;
 const STAKE_MAX = 500;
 
-const NEEDS_MEMBER_LIST = 'The group needs a quick upgrade. Ask Kyle.';
 const NEEDS_UPGRADE = 'This bet needs the group upgrade first. Ask Kyle.';
 
 const betRef = (db: Firestore, betId: string) => doc(db, `bets/${betId}`);

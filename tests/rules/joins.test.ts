@@ -376,6 +376,21 @@ describe('member list (group/members)', () => {
     expect(await peek('group/members')).toEqual({ uids: allUids() });
   });
 
+  it('approve fails while group/members is missing', async () => {
+    await voteAll(['yes', 'yes', 'yes', 'yes']);
+    await env.withSecurityRulesDisabled((ctx) => deleteDoc(doc(ctx.firestore() as unknown as Firestore, 'group/members')));
+    await assertFails(approve(dbAs(env, 'jo'), 'riley'));
+    expect(await peek('users/riley')).toMatchObject({ status: 'pending' });
+    expect(await peek('group/main')).toMatchObject({ memberCount: 6 });
+  });
+
+  it('reject still succeeds while group/members is missing', async () => {
+    await voteAll(['no', 'no', 'no', 'no']);
+    await env.withSecurityRulesDisabled((ctx) => deleteDoc(doc(ctx.firestore() as unknown as Firestore, 'group/members')));
+    await assertSucceeds(reject(dbAs(env, 'sam'), 'riley'));
+    expect(await peek('users/riley')).toMatchObject({ status: 'rejected' });
+  });
+
   it('cannot add to group/members without the admission', async () => {
     await seed(env, { members: MEMBERS, pending: ['riley'], joinTallies: { riley: yes4 } });
     const db = dbAs(env, 'jo');

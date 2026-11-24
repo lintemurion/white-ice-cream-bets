@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Timestamp } from 'firebase/firestore';
-import { planRemoval, type RemovalInput, type Write } from '../../src/model/removal';
+import { DELETE, planRemoval, type RemovalInput, type Write } from '../../src/model/removal';
 import type { BetDoc, JoinRequestDoc } from '../../src/model/types';
 import { betDoc } from '../rules/helpers';
 
@@ -29,7 +29,7 @@ describe('planRemoval', () => {
     const w = planRemoval(input());
     expect(at(w, 'users/zoe')).toEqual({ op: 'update', path: 'users/zoe', data: { status: 'former' } });
     expect(at(w, 'group/main')).toEqual({ op: 'update', path: 'group/main', data: { memberCount: 5 } });
-    expect(w).toHaveLength(2);
+    expect(w).toHaveLength(3);
   });
 
   it('removes her open vote and her anonymous ballot with matching tally decrement', () => {
@@ -81,24 +81,99 @@ describe('planRemoval', () => {
     });
   });
 
-  it('voids proposed and active bets where she is a side or subject, keeps settled ones', () => {
+  it('removes her from a proposed team bet; the bet goes active if everyone left is in', () => {
     const w = planRemoval(
       input({
         bets: [
-          { id: 'p1', bet: betDoc({ status: 'proposed', sideA: 'zoe' }) },
-          { id: 'a1', bet: betDoc({ status: 'active', sideB: 'zoe' }) },
-          { id: 'a2', bet: betDoc({ status: 'active', subject: 'zoe' }) },
-          { id: 'a3', bet: betDoc({ status: 'active' }) },
-          { id: 's1', bet: betDoc({ status: 'settled', winner: 'A', sideB: 'zoe' }) },
-          { id: 'pd1', bet: betDoc({ status: 'paid', winner: 'B', sideA: 'zoe' }) },
-          { id: 'v1', bet: voting({ sideA: 'zoe' }) },
+          // Everyone but zoe is in: without her the bet is active.
+          { id: 'p1', bet: betDoc({ sideA: ['ava', 'mac'], sideB: ['jo', 'zoe'], confirmed: ['ava', 'mac', 'jo'] }) },
+          // Someone else is still waiting: stays proposed, her confirmation goes too.
+          { id: 'p2', bet: betDoc({ sideA: ['ava', 'zoe'], sideB: ['jo'], confirmed: ['ava', 'zoe'] }) },
+          // She is the proposer; the next on side A leads.
+          { id: 'p3', bet: betDoc({ sideA: ['zoe', 'ava'], sideB: [], confirmed: ['zoe', 'ava'], createdBy: 'zoe' }) },
+          // Not on it: no write.
+          { id: 'p4', bet: betDoc() },
         ],
       }),
     );
-    for (const id of ['p1', 'a1', 'a2']) {
-      expect(at(w, `bets/${id}`)).toEqual({ op: 'update', path: `bets/${id}`, data: { status: 'void' } });
-    }
-    for (const id of ['a3', 's1', 'pd1', 'v1']) expect(at(w, `bets/${id}`)).toBeUndefined();
+    expect(at(w, 'bets/p1')).toEqual({
+      op: 'update',
+      path: 'bets/p1',
+      data: { sideA: ['ava', 'mac'], sideB: ['jo'], confirmed: ['ava', 'mac', 'jo'], subjects: [], status: 'active' },
+    });
+    expect(at(w, 'bets/p2')?.data).toEqual({
+      sideA: ['ava'],
+      sideB: ['jo'],
+      confirmed: ['ava'],
+      subjects: [],
+      status: 'proposed',
+    });
+    expect(at(w, 'bets/p3')?.data).toMatchObject({ sideA: ['ava'], sideB: [], confirmed: ['ava'], status: 'proposed' });
+    expect(at(w, 'bets/p4')).toBeUndefined();
+  });
+
+  it('voids a proposed bet when she was the last on side A', () => {
+    const w = planRemoval(
+      input({ bets: [{ id: 'p1', bet: betDoc({ sideA: ['zoe'], sideB: ['jo'], confirmed: ['zoe', 'jo'], createdBy: 'zoe' }) }] }),
+    );
+    expect(at(w, 'bets/p1')?.data).toEqual({ sideA: [], sideB: ['jo'], confirmed: ['jo'], subjects: [], status: 'void' });
+  });
+
+  it('removes her from an active bet side; voids it if that side empties', () => {
+    const all = (a: string[], b: string[]) => ({ status: 'active' as const, sideA: a, sideB: b, confirmed: [...a, ...b] });
+    const w = planRemoval(
+      input({
+        bets: [
+          { id: 'a1', bet: betDoc(all(['ava', 'zoe'], ['jo'])) },
+          { id: 'a2', bet: betDoc(all(['ava'], ['zoe'])) },
+          { id: 'a3', bet: betDoc(all(['zoe'], ['jo', 'mac'])) },
+          { id: 'a4', bet: betDoc(all(['ava'], ['jo'])) },
+        ],
+      }),
+    );
+    expect(at(w, 'bets/a1')?.data).toEqual({ sideA: ['ava'], sideB: ['jo'], confirmed: ['ava', 'jo'], subjects: [] });
+    expect(at(w, 'bets/a2')?.data).toEqual({ sideA: ['ava'], sideB: [], confirmed: ['ava'], subjects: [], status: 'void' });
+    expect(at(w, 'bets/a3')?.data).toMatchObject({ sideA: [], status: 'void' });
+    expect(at(w, 'bets/a4')).toBeUndefined();
+  });
+
+  it('removes her from subjects', () => {
+    const w = planRemoval(
+      input({
+        bets: [
+          { id: 'p1', bet: betDoc({ subjects: ['zoe', 'mac'] }) },
+          { id: 'a1', bet: betDoc({ status: 'active', confirmed: ['ava', 'jo'], subjects: ['zoe'] }) },
+        ],
+      }),
+    );
+    expect(at(w, 'bets/p1')?.data).toEqual({
+      sideA: ['ava'],
+      sideB: ['jo'],
+      confirmed: ['ava'],
+      subjects: ['mac'],
+      status: 'proposed',
+    });
+    // Still active: both sides keep their people.
+    expect(at(w, 'bets/a1')?.data).toEqual({ sideA: ['ava'], sideB: ['jo'], confirmed: ['ava', 'jo'], subjects: [] });
+  });
+
+  it('keeps her on voting, settled, and paid bets', () => {
+    const w = planRemoval(
+      input({
+        bets: [
+          { id: 'v1', bet: voting({ sideA: ['zoe', 'ava'], confirmed: ['zoe', 'ava', 'jo'], subjects: ['mac'] }) },
+          { id: 'v2', bet: voting({ subjects: ['zoe'], confirmed: ['ava', 'jo'] }) },
+          { id: 's1', bet: betDoc({ status: 'settled', winner: 'A', sideB: ['zoe'], confirmed: ['ava', 'zoe'] }) },
+          { id: 'pd1', bet: betDoc({ status: 'paid', winner: 'B', sideA: ['zoe'], paidBy: ['jo'] }) },
+        ],
+      }),
+    );
+    for (const id of ['v1', 'v2', 's1', 'pd1']) expect(at(w, `bets/${id}`)).toBeUndefined();
+  });
+
+  it('removes her from the member list', () => {
+    const w = planRemoval(input());
+    expect(at(w, 'group/members')).toEqual({ op: 'update', path: 'group/members', data: { 'uids.zoe': DELETE } });
   });
 
   it('settles a bet that was 3 of 6 for A once the count drops to 5', () => {
@@ -172,6 +247,7 @@ describe('planRemoval', () => {
       path: 'group/main',
       data: { memberCount: 6, lastAdmitted: 'riley' },
     });
+    expect(at(w, 'group/members')?.data).toEqual({ 'uids.zoe': DELETE, 'uids.riley': true });
     expect(at(w, 'joinRequests/tess')).toBeUndefined();
     expect(at(w, 'joinRequests/uma')).toBeUndefined();
     expect(at(w, 'bets/stays')).toBeUndefined();
@@ -198,6 +274,6 @@ describe('planRemoval', () => {
         ],
       }),
     );
-    expect(w.map((x) => x.path).sort()).toEqual(['group/main', 'users/zoe']);
+    expect(w.map((x) => x.path).sort()).toEqual(['group/main', 'group/members', 'users/zoe']);
   });
 });

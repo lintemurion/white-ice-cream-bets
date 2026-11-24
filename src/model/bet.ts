@@ -95,3 +95,25 @@ export function normalizeBet(raw: Record<string, unknown>): BetDoc {
     paidBy,
   };
 }
+
+export type UpgradeCheck = {
+  membersDocExists: boolean;
+  /** The keys in group/members.uids (empty if the doc is missing). */
+  listed: Uid[];
+  /** Users whose status is member. */
+  memberUsers: Uid[];
+  /** Every bet doc as stored. */
+  bets: Array<Record<string, unknown>>;
+};
+
+/**
+ * True while Upgrade data has work to do: group/members is missing or does not list exactly
+ * the users with status member (say it was hand-deleted or emptied), or any bet is old-format.
+ */
+export function needsUpgrade(input: UpgradeCheck): boolean {
+  if (!input.membersDocExists) return true;
+  const listed = new Set(input.listed);
+  const members = new Set(input.memberUsers);
+  if (listed.size !== members.size || [...members].some((u) => !listed.has(u))) return true;
+  return input.bets.some(isOldFormat);
+}

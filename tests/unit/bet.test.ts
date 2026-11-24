@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { everyone, isOldFormat, MAX_PEOPLE, nextStatus, normalizeBet, sideLabel, sideOf, waitingOn } from '../../src/model/bet';
+import {
+  everyone,
+  isOldFormat,
+  MAX_PEOPLE,
+  needsUpgrade,
+  nextStatus,
+  normalizeBet,
+  sideLabel,
+  sideOf,
+  waitingOn,
+} from '../../src/model/bet';
 import { betDoc } from '../rules/helpers';
 
 describe('nextStatus', () => {
@@ -95,5 +105,24 @@ describe('sideLabel', () => {
 
   it('never prints a raw uid', () => {
     expect(sideLabel(['ava', 'gone'], names)).toBe('Ava & Former member');
+  });
+});
+
+describe('needsUpgrade', () => {
+  const ok = { membersDocExists: true, listed: ['ava', 'jo'], memberUsers: ['jo', 'ava'], bets: [] };
+  const newBet = betDoc() as unknown as Record<string, unknown>;
+  const oldBet = { ...newBet, sideA: 'ava', sideB: 'jo', subject: null, confirmed: undefined, paidBy: undefined };
+
+  it('is false when the member list matches and every bet is new-shape', () => {
+    expect(needsUpgrade(ok)).toBe(false);
+    expect(needsUpgrade({ ...ok, bets: [newBet] })).toBe(false);
+  });
+
+  it('is true for a missing member list, an old-format bet, or a list out of step with the users', () => {
+    expect(needsUpgrade({ ...ok, membersDocExists: false, listed: [] })).toBe(true);
+    expect(needsUpgrade({ ...ok, bets: [newBet, oldBet] })).toBe(true);
+    expect(needsUpgrade({ ...ok, listed: [] })).toBe(true);
+    expect(needsUpgrade({ ...ok, listed: ['ava', 'jo', 'gone'] })).toBe(true);
+    expect(needsUpgrade({ ...ok, listed: ['ava'] })).toBe(true);
   });
 });

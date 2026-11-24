@@ -1,17 +1,20 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { assertFails, assertSucceeds, type RulesTestEnvironment } from '@firebase/rules-unit-testing';
-import { collection, doc, getDoc, getDocs, setDoc, type Firestore } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDoc, getDocs, setDoc, Timestamp, type Firestore } from 'firebase/firestore';
 import {
   adminApprove,
   adminClearVote,
   adminDeleteBet,
   adminEditBet,
+  adminMarkPaidFor,
   adminReject,
   adminReopenVote,
+  checkNeedsUpgrade,
   clearRejection,
   initGroup,
   removeMember,
   renameUser,
+  upgradeData,
 } from '../../src/data/admin';
 import { castAnonVote, castOpenVote, trySettle } from '../../src/data/bets';
 import { castJoinVote, requestToJoin } from '../../src/data/joins';
@@ -52,6 +55,33 @@ async function ids(path: string) {
 }
 
 const as = (uid: string) => dbAs(env, uid);
+
+/** Writes a doc as given, with rules off (for old-format bets the seed helper would reshape). */
+async function put(path: string, data: Record<string, unknown>) {
+  await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore() as unknown as Firestore, path), data));
+}
+
+/** A bet as written before team bets: single-id sides, `subject`, no confirmed or paidBy. */
+function oldBet(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    description: 'Old bet',
+    sideA: 'ava',
+    sideB: 'jo',
+    subject: 'maya',
+    stakeA: '$5',
+    stakeB: '$5',
+    voteStyle: 'open',
+    status: 'active',
+    winner: null,
+    createdBy: 'ava',
+    createdAt: Timestamp.fromMillis(Date.UTC(2026, 0, 1)),
+    votesA: {},
+    votesB: {},
+    voters: {},
+    voterCount: 0,
+    ...over,
+  };
+}
 
 describe('admin data layer', () => {
   it('initGroup creates group/main and group/members once', async () => {
@@ -132,7 +162,8 @@ describe('admin data layer', () => {
       bets: {
         open1: { status: 'voting', votesA: { ava: true, jo: true }, votesB: { zoe: true } },
         anon1: { status: 'voting', voteStyle: 'anonymous' },
-        void1: { status: 'active', sideB: 'zoe' },
+        void1: { status: 'active', sideB: ['zoe'], confirmed: ['ava', 'zoe'] },
+        team1: { status: 'active', sideA: ['ava', 'zoe'], confirmed: ['ava', 'zoe', 'jo'] },
       },
       betTallies: { anon1: { A: 0, B: 0 } },
     });
@@ -163,7 +194,10 @@ describe('admin data layer', () => {
     expect(await peek('bets/anon1')).toMatchObject({ status: 'voting', voters: { ava: true, jo: true }, voterCount: 2 });
     expect(await peek('bets/anon1/tally/counts')).toEqual({ A: 2, B: 0 });
     expect(await peek('bets/anon1/ballots/zoe')).toBeUndefined();
-    expect(await peek('bets/void1')).toMatchObject({ status: 'void' });
+    expect(await peek('bets/void1')).toMatchObject({ status: 'void', sideB: [] });
+    expect(await peek('bets/team1')).toMatchObject({ status: 'active', sideA: ['ava'], confirmed: ['ava', 'jo'] });
+    expect(await peek('group/members')).not.toHaveProperty('uids.zoe');
+    expect(await peek('group/members')).toHaveProperty('uids.riley', true);
 
     await assertFails(getDocs(collection(as('zoe'), 'bets')));
     await assertFails(getDoc(doc(as('zoe'), 'bets/open1')));
@@ -177,6 +211,16 @@ describe('admin data layer', () => {
     await removeMember(admin, 'zoe');
     expect(await peek('group/main')).toEqual({ memberCount: 5, lastAdmitted: null });
     expect(await peek('bets/open1')).toMatchObject({ status: 'settled', winner: 'A', votesB: {} });
+  });
+
+  it('removeMember reads an old-format bet and still works without group/members', async () => {
+    await seed(env, { members: MEMBERS });
+    await put('bets/old1', oldBet({ sideB: 'zoe' }));
+    await env.withSecurityRulesDisabled((ctx) => deleteDoc(doc(ctx.firestore() as unknown as Firestore, 'group/members')));
+    await removeMember(admin, 'zoe');
+    expect(await peek('users/zoe')).toMatchObject({ status: 'former' });
+    expect(await peek('bets/old1')).toMatchObject({ status: 'void', sideA: ['ava'], sideB: [], subjects: ['maya'] });
+    expect(await peek('group/members')).toBeUndefined();
   });
 
   it('removeMember refuses a uid that is not a member', async () => {
@@ -283,41 +327,131 @@ describe('admin data layer', () => {
 
   it('adminEditBet trims and checks text, and writes the patch', async () => {
     await seed(env, { members: MEMBERS, bets: { b1: { status: 'active' } } });
-    await adminEditBet(admin, 'b1', { description: '  Snow before Dec 1  ', stakeB: ' a ride ', voteStyle: 'anonymous' });
-    expect(await peek('bets/b1')).toMatchObject({ description: 'Snow before Dec 1', stakeB: 'a ride', voteStyle: 'anonymous' });
+    await adminEditBet(admin, 'b1', { description: '  Snow before Dec 1  ', stakeB: ' a ride ' });
+    expect(await peek('bets/b1')).toMatchObject({ description: 'Snow before Dec 1', stakeB: 'a ride' });
     await expect(adminEditBet(admin, 'b1', { stakeA: '   ' })).rejects.toThrow(/blank/);
     await expect(adminEditBet(admin, 'b1', { description: 'x'.repeat(2001) })).rejects.toThrow(/2000/);
     expect(await peek('bets/b1')).toMatchObject({ stakeA: '$5' });
   });
 
-  it('adminEditBet rejects a subject that is a side or not a member', async () => {
-    await seed(env, { members: MEMBERS, bets: { b1: { status: 'active' } } });
-    const { sideA, sideB } = (await peek('bets/b1')) as { sideA: string; sideB: string };
-    await expect(adminEditBet(admin, 'b1', { subject: sideA })).rejects.toThrow(/side/);
-    await expect(adminEditBet(admin, 'b1', { subject: sideB })).rejects.toThrow(/side/);
-    await expect(adminEditBet(admin, 'b1', { subject: 'nobody' })).rejects.toThrow(/member/);
-    const other = MEMBERS.find((m) => m !== sideA && m !== sideB)!;
-    await adminEditBet(admin, 'b1', { subject: other });
-    expect(await peek('bets/b1')).toMatchObject({ subject: other });
+  it('adminEditBet rejects a subject on a side or a non-member; accepts unchanged subjects', async () => {
+    await seed(env, {
+      members: MEMBERS,
+      former: ['gone'],
+      pending: ['riley'],
+      bets: {
+        b1: { status: 'active', sideA: ['ava', 'jo'], sideB: ['maya'], confirmed: ['ava', 'jo', 'maya'] },
+        s1: { status: 'settled', winner: 'A', subjects: ['gone'], confirmed: ['ava', 'jo'] },
+      },
+    });
+    await expect(adminEditBet(admin, 'b1', { subjects: ['jo'] })).rejects.toThrow(/side/);
+    await expect(adminEditBet(admin, 'b1', { subjects: ['maya'] })).rejects.toThrow(/side/);
+    await expect(adminEditBet(admin, 'b1', { subjects: ['nobody'] })).rejects.toThrow(/member/);
+    await expect(adminEditBet(admin, 'b1', { subjects: ['riley'] })).rejects.toThrow(/member/);
+    await expect(adminEditBet(admin, 'b1', { subjects: ['zoe', 'zoe'] })).rejects.toThrow(/twice/);
+    expect(await peek('bets/b1')).toMatchObject({ subjects: [] });
+    await adminEditBet(admin, 'b1', { subjects: ['zoe', 'sam'] });
+    expect(await peek('bets/b1')).toMatchObject({ subjects: ['zoe', 'sam'] });
+
+    // A removed member stays the subject of a kept bet: unchanged subjects are not re-checked.
+    await adminEditBet(admin, 's1', { description: 'Fixed text' });
+    await adminEditBet(admin, 's1', { description: 'Fixed again', subjects: ['gone'] });
+    expect(await peek('bets/s1')).toMatchObject({ description: 'Fixed again', subjects: ['gone'] });
+    // Adding a current member next to her is fine; adding a non-member is not.
+    await adminEditBet(admin, 's1', { subjects: ['gone', 'zoe'] });
+    expect(await peek('bets/s1')).toMatchObject({ subjects: ['gone', 'zoe'] });
+    await expect(adminEditBet(admin, 's1', { subjects: ['gone', 'zoe', 'riley'] })).rejects.toThrow(/member/);
   });
 
-  it('adminEditBet does not re-check an unchanged subject who is now a former member', async () => {
-    await seed(env, { members: MEMBERS, former: ['gone'], bets: { b1: { status: 'settled', winner: 'A', subject: 'gone' } } });
-    await adminEditBet(admin, 'b1', { description: 'Fixed text' });
-    await adminEditBet(admin, 'b1', { description: 'Fixed again', subject: 'gone' });
-    expect(await peek('bets/b1')).toMatchObject({ description: 'Fixed again', subject: 'gone' });
+  it('adminEditBet keeps a bet within 8 people', async () => {
+    const many = ['m1', 'm2', 'm3', 'm4', 'm5', 'm6', 'm7', 'm8', 'm9'];
+    await seed(env, {
+      members: many,
+      bets: { b1: { sideA: ['m1', 'm2', 'm3'], sideB: ['m4', 'm5', 'm6'], confirmed: ['m1'], createdBy: 'm1' } },
+    });
+    await expect(adminEditBet(admin, 'b1', { subjects: ['m7', 'm8', 'm9'] })).rejects.toThrow(/8/);
+    await adminEditBet(admin, 'b1', { subjects: ['m7', 'm8'] });
+    expect(await peek('bets/b1')).toMatchObject({ subjects: ['m7', 'm8'] });
   });
 
-  it('adminEditBet switching a bet to anonymous gives it a zero tally so members can vote', async () => {
-    await seed(env, { members: MEMBERS, bets: { b1: { status: 'voting' } } });
-    await adminEditBet(admin, 'b1', { voteStyle: 'anonymous' });
-    expect(await peek('bets/b1/tally/counts')).toEqual({ A: 0, B: 0 });
-    await castAnonVote(as('ava'), 'ava', 'b1', 'A');
-    expect(await peek('bets/b1/tally/counts')).toEqual({ A: 1, B: 0 });
+  it('adminMarkPaidFor marks a removed winner paid', async () => {
+    await seed(env, {
+      members: MEMBERS,
+      bets: {
+        s1: {
+          status: 'settled',
+          winner: 'A',
+          sideA: ['ava', 'zoe'],
+          sideB: ['jo'],
+          confirmed: ['ava', 'zoe', 'jo'],
+          votesA: { ava: true, maya: true, priya: true, sam: true },
+        },
+      },
+    });
+    await removeMember(admin, 'zoe');
+    await expect(adminMarkPaidFor(admin, 's1', 'jo')).rejects.toThrow(/winning side/);
 
-    // An existing tally is kept.
-    await adminEditBet(admin, 'b1', { voteStyle: 'anonymous' });
-    expect(await peek('bets/b1/tally/counts')).toEqual({ A: 1, B: 0 });
+    await adminMarkPaidFor(admin, 's1', 'zoe');
+    expect(await peek('bets/s1')).toMatchObject({ status: 'settled', paidBy: ['zoe'] });
+    // Marking her again changes nothing.
+    await adminMarkPaidFor(admin, 's1', 'zoe');
+    expect(await peek('bets/s1')).toMatchObject({ status: 'settled', paidBy: ['zoe'] });
+
+    await adminMarkPaidFor(admin, 's1', 'ava');
+    expect(await peek('bets/s1')).toMatchObject({ status: 'paid', paidBy: ['zoe', 'ava'] });
+  });
+
+  it('adminMarkPaidFor refuses a bet that is not settled', async () => {
+    await seed(env, { members: MEMBERS, bets: { a1: { status: 'active', confirmed: ['ava', 'jo'] } } });
+    await expect(adminMarkPaidFor(admin, 'a1', 'ava')).rejects.toThrow(/settled/);
+  });
+
+  it('upgradeData builds the member list and converts an old-format bet', async () => {
+    await seed(env, { members: MEMBERS, former: ['fay'], pending: ['riley'], bets: { new1: { status: 'proposed' } } });
+    await put('bets/old1', oldBet());
+    await put('bets/old2', oldBet({ status: 'paid', winner: 'B', sideB: 'fay', subject: null }));
+    await put('group/members', { uids: { ava: true, fay: true } });
+    const before = await peek('bets/new1');
+
+    expect(await upgradeData(admin)).toEqual({ members: 6, bets: 2 });
+
+    expect(await peek('group/members')).toEqual({ uids: Object.fromEntries(MEMBERS.map((u) => [u, true])) });
+    const old1 = await peek('bets/old1');
+    expect(old1).toMatchObject({
+      sideA: ['ava'],
+      sideB: ['jo'],
+      subjects: ['maya'],
+      confirmed: ['ava', 'jo'],
+      paidBy: [],
+      status: 'active',
+      description: 'Old bet',
+    });
+    expect(old1).not.toHaveProperty('subject');
+    const old2 = await peek('bets/old2');
+    expect(old2).toMatchObject({ sideB: ['fay'], subjects: [], paidBy: ['fay'], status: 'paid' });
+    expect(old2).not.toHaveProperty('subject');
+    expect(await peek('bets/new1')).toEqual(before);
+
+    // A member can now propose and the converted bet works with the new rules.
+    expect(await peek('group/members')).toHaveProperty('uids.zoe', true);
+  });
+
+  it('upgradeData rebuilds a hand-deleted member list', async () => {
+    await seed(env, { members: MEMBERS });
+    await env.withSecurityRulesDisabled((ctx) => deleteDoc(doc(ctx.firestore() as unknown as Firestore, 'group/members')));
+    expect(await checkNeedsUpgrade(admin)).toBe(true);
+    expect(await upgradeData(admin)).toEqual({ members: 6, bets: 0 });
+    expect(await peek('group/members')).toEqual({ uids: Object.fromEntries(MEMBERS.map((u) => [u, true])) });
+  });
+
+  it('needsUpgrade is false after upgradeData', async () => {
+    await seed(env, { members: MEMBERS, bets: { new1: {} } });
+    expect(await checkNeedsUpgrade(admin)).toBe(false);
+    await put('bets/old1', oldBet());
+    await put('group/members', { uids: {} });
+    expect(await checkNeedsUpgrade(admin)).toBe(true);
+    await upgradeData(admin);
+    expect(await checkNeedsUpgrade(admin)).toBe(false);
   });
 
   it('renameUser trims, checks, and keeps a pending request name in step', async () => {
