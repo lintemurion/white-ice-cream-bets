@@ -25,7 +25,7 @@ export function Home(props: {
   const group = (items: { id: string }[]) => items.map((i) => props.renderBet(i.id));
   const empty =
     props.joinIds.length === 0 &&
-    [s.needsYou, s.voting, s.active, s.proposedByMe, s.settled].every((list) => list.length === 0);
+    [s.needsYou, s.voting, s.active, s.waiting, s.openChallenges, s.settled].every((list) => list.length === 0);
   return (
     <main class="screen">
       <header class="home-header">
@@ -37,7 +37,8 @@ export function Home(props: {
       <Section title="NEEDS YOU" count={s.needsYou.length}>{group(s.needsYou)}</Section>
       <Section title="VOTING" count={s.voting.length}>{group(s.voting)}</Section>
       <Section title="ACTIVE" count={s.active.length}>{group(s.active)}</Section>
-      <Section title="WAITING" count={s.proposedByMe.length}>{group(s.proposedByMe)}</Section>
+      <Section title="WAITING" count={s.waiting.length}>{group(s.waiting)}</Section>
+      <Section title="OPEN CHALLENGES" count={s.openChallenges.length}>{group(s.openChallenges)}</Section>
       <Section title="SETTLED" count={s.settled.length}>{group(s.settled)}</Section>
       <footer class="row">
         <button type="button" class="btn link" onClick={props.onProfile}>Profile</button>

@@ -8,13 +8,26 @@ const at = (ms: number) => ({ toMillis: () => ms }) as Timestamp;
 const item = (id: string, over = {}) => ({ id, bet: bet(over) });
 
 describe('sections', () => {
-  it('puts proposed bets where I am side B in needsYou, and mine in proposedByMe', () => {
+  it('sections: needsYou, waiting, open challenges', () => {
     const s = sections('jo', [
-      item('1', { status: 'proposed', sideA: 'ava', sideB: 'jo' }),
-      item('2', { status: 'proposed', sideA: 'jo', sideB: 'ava' }),
+      // Named on side B, not in yet.
+      item('named', { status: 'proposed', sideA: ['ava'], sideB: ['jo'], confirmed: ['ava'] }),
+      // Named on side A as a teammate, not in yet.
+      item('teammate', { status: 'proposed', sideA: ['ava', 'jo'], sideB: ['sam'], confirmed: ['ava'] }),
+      // My own proposal, waiting on Ava.
+      item('mine', { status: 'proposed', sideA: ['jo'], sideB: ['ava'], confirmed: ['jo'], createdBy: 'jo' }),
+      // My own open challenge.
+      item('my-open', { status: 'proposed', sideA: ['jo'], sideB: [], confirmed: ['jo'], createdBy: 'jo' }),
+      // Someone else's open challenge.
+      item('open', { status: 'proposed', sideA: ['ava'], sideB: [], confirmed: ['ava'] }),
+      // An open challenge about me: not offered.
+      item('about-me', { status: 'proposed', sideA: ['ava'], sideB: [], subjects: ['jo'], confirmed: ['ava'] }),
+      // I proposed it but left: not mine any more.
+      item('left', { status: 'proposed', sideA: ['ava'], sideB: ['sam'], confirmed: ['ava'], createdBy: 'jo' }),
     ]);
-    expect(s.needsYou.map((x) => x.id)).toEqual(['1']);
-    expect(s.proposedByMe.map((x) => x.id)).toEqual(['2']);
+    expect(s.needsYou.map((x) => x.id)).toEqual(['named', 'teammate']);
+    expect(s.waiting.map((x) => x.id)).toEqual(['mine', 'my-open']);
+    expect(s.openChallenges.map((x) => x.id)).toEqual(['open']);
   });
 
   it('hides void bets; settled lists unpaid bets first, then paid', () => {
@@ -28,7 +41,7 @@ describe('sections', () => {
     expect(s.settled.map((x) => x.id)).toEqual(['s', 'p']);
     expect(s.active.map((x) => x.id)).toEqual(['a']);
     expect(s.voting.map((x) => x.id)).toEqual(['c']);
-    const all = [s.needsYou, s.voting, s.active, s.settled, s.proposedByMe].flat().map((x) => x.id);
+    const all = [s.needsYou, s.voting, s.active, s.settled, s.waiting, s.openChallenges].flat().map((x) => x.id);
     expect(all).not.toContain('v');
   });
 
@@ -48,10 +61,11 @@ describe('sections', () => {
     expect(s.settled.map((x) => x.id)).toEqual(['s-new', 's-old', 'p-new', 'p-old']);
   });
 
-  it("ignores other people's proposed bets", () => {
-    const s = sections('jo', [item('x', { status: 'proposed', sideA: 'ava', sideB: 'sam' })]);
+  it("ignores other people's proposed bets that have both sides", () => {
+    const s = sections('jo', [item('x', { status: 'proposed', sideA: ['ava'], sideB: ['sam'], confirmed: ['ava'] })]);
     expect(s.needsYou).toEqual([]);
-    expect(s.proposedByMe).toEqual([]);
+    expect(s.waiting).toEqual([]);
+    expect(s.openChallenges).toEqual([]);
   });
 });
 
