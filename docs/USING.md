@@ -16,16 +16,30 @@ The group's place to make bets, decide who won, and keep track of who owes what.
 
 1. Tap **+ New Bet**.
 2. **What's the bet?** For example, "Jo passes the driving test before March."
-3. **About someone?** If the bet is about someone who controls the outcome, pick them. That person can't be one of the two sides, so nobody can win a bet they can just make happen.
-4. **Me vs:** pick who you're betting against.
-5. **If I lose / If they lose:** what each side owes. It can be anything: "$5", "a ride to the mall", "a friendship bracelet". The two can be different.
-6. **Votes:** choose **Open** or **Anonymous** (see below).
-7. Tap **Propose bet**. The other person has to **Accept** before it counts. They can also **Decline**, and you can **Cancel** until they accept.
+3. **About anyone?** (optional) If the bet is about people who control the outcome, pick them. They can't be on either side, so nobody can win a bet they can just make happen.
+4. **My side:** you're already on it. Add teammates if you like.
+5. **Against:** pick who you're betting against, one person or several. Leave it empty to make an open challenge. Anyone not on a side can join it later.
+6. **If my side loses / If their side loses:** what each side owes. It can be anything: "$5", "a ride to the mall", "a friendship bracelet". The two can be different. If a side has several people, each of them owes the stake.
+7. **Votes:** choose **Open** or **Anonymous** (see below).
+8. Tap **Propose bet**.
+
+A bet can have up to 8 people in total, counting both sides and the people it's about.
+
+## Getting everyone in
+
+A new bet waits until everyone on it has tapped **I'm in**. The card shows **Waiting on:** and the names still to answer.
+
+- **I'm in:** you agree to the bet. You're counted as in right away if you proposed it.
+- **Switch sides:** move to the other side.
+- **Leave:** step out of the bet. If the last person on your side leaves, the bet is cancelled.
+- **Join other side**, or **Join** and a name: if you're not on a bet and aren't someone it's about, you can join a side until the bet is on. An open challenge shows **(open challenge)** until someone joins against.
+
+Once everyone is in and both sides have someone, the bet is on. From then on, the sides are locked: no joining, switching, or leaving.
 
 ## Deciding who won
 
 1. When it's time, anyone taps **Call it**. Voting opens.
-2. Everyone votes for who won, including the two people betting and the person it's about. You can change your vote until it's decided. Tapping your current vote again takes it back.
+2. Everyone votes for who won, including the people betting and the people it's about. You can change your vote until it's decided. Tapping your current vote again takes it back.
 3. As soon as one side has votes from more than half the group, the bet is settled.
 
 **Open votes:** everyone can see who voted which way, and the count shows as votes come in.
@@ -36,7 +50,7 @@ Votes on new people joining are always anonymous.
 
 ## Paying up
 
-A settled bet shows who owes whom and what. When the loser pays up, the **winner** taps **Mark paid**.
+A settled bet shows who owes whom and what, like "Sam & Jo owe Max: $5". When a loser pays up, each **winner** taps **I got paid** for their own share. The card shows **Paid: 1 of 2** as winners tap, and the bet is marked paid when the last one does.
 
 ## Good to know
 

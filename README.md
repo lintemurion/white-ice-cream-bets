@@ -104,14 +104,16 @@ npx firebase deploy --project <project>
 
 Sign in with the admin email to get the admin page. The admin is never a member: no voting, no betting, never counted in a majority.
 
+- **Upgrade data (once, right after the team bets update deploys):** press **Upgrade data** on the admin page. It lists the current members for the rules and converts old bets to the new format. Until you do, members can't propose bets and votes to let new people in won't go through; they'll see "The group needs a quick upgrade. Ask Kyle." The button goes away when there's nothing left to upgrade.
+
 - **Let someone in or keep them out:** under **Pending requests**, **Approve** or **Reject**. This skips the group vote.
 - **Let a rejected person ask again:** under **Rejected**, **Clear**. They can then sign in and request to join again.
 - **Rename someone:** edit the name under **Members** and tap **Rename**.
-- **Remove a member:** tap **Remove** and type their name exactly to confirm. They become a former member and can't get back in (unless you clear them later). Their votes come off anything still being voted on, bets they're in or about that haven't reached voting are cancelled, and every open vote is re-counted against the smaller group. Settled bets and debts involving them stay visible. Mark paid any debt owed **to** them yourself.
-- **Fix a bet:** under **Bets**, edit the description, stakes, or who it's about, and **Save**. You can't change a bet between open and anonymous; delete it and have them propose it again.
+- **Remove a member:** tap **Remove** and type their name exactly to confirm. They become a former member and can't get back in (unless you clear them later). Their votes come off anything still being voted on. On team bets, they come off proposed and active bets, and a bet is cancelled if a side ends up empty; they stay on bets that are in voting or later. If they were someone a bet was about, they come off that list. Every open vote is re-counted against the smaller group. Settled bets and debts involving them stay visible. Use **Mark <name> paid** (below) for any debt owed **to** them.
+- **Fix a bet:** under **Bets**, edit the description, stakes, or who it's about (the **Subjects** picker), and **Save**. You can't change a bet between open and anonymous; delete it and have them propose it again.
 - **Undo a result:** **Reopen vote** on a settled or paid bet. All its votes are cleared and the group votes again from scratch.
 - **Clear one person's vote** on a bet that's being voted on.
-- **Mark paid** on any settled bet.
+- **Mark <name> paid** on a settled bet, one button per winner who hasn't been paid yet. The bet is paid when the last winner is.
 - **Delete a bet:** type `delete` to confirm.
 
 ## Tests
