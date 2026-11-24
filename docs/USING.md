@@ -19,7 +19,7 @@ The group's place to make bets, decide who won, and keep track of who owes what.
 3. **About anyone?** (optional) If the bet is about people who control the outcome, pick them. They can't be on either side, so nobody can win a bet they can just make happen.
 4. **My side:** you're already on it. Add teammates if you like.
 5. **Against:** pick who you're betting against, one person or several. Leave it empty to make an open challenge. Anyone not on a side can join it later.
-6. **If my side loses / If their side loses:** what each side owes. It can be anything: "$5", "a ride to the mall", "a friendship bracelet". The two can be different. If a side has several people, each of them owes the stake.
+6. **If my side loses / If their side loses:** what each side owes. It can be anything: "$5", "a ride to the mall", "a friendship bracelet". The two can be different. Each side's stake is owed by that side as a group, not by each person. If you want "$5 each", write that in the stake.
 7. **Votes:** choose **Open** or **Anonymous** (see below).
 8. Tap **Propose bet**.
 
@@ -31,7 +31,7 @@ A new bet waits until everyone on it has tapped **I'm in**. The card shows **Wai
 
 - **I'm in:** you agree to the bet. You're counted as in right away if you proposed it.
 - **Switch sides:** move to the other side.
-- **Leave:** step out of the bet. If the last person on your side leaves, the bet is cancelled.
+- **Leave:** step out of the bet. If the last person on the first side (the proposer's side) leaves, the bet is cancelled. If the other side empties, it becomes an open challenge.
 - **Join other side**, or **Join** and a name: if you're not on a bet and aren't someone it's about, you can join a side until the bet is on. An open challenge shows **(open challenge)** until someone joins against.
 
 Once everyone is in and both sides have someone, the bet is on. From then on, the sides are locked: no joining, switching, or leaving.
