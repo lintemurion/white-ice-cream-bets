@@ -156,7 +156,14 @@ describe('propose', () => {
     await assertFails(propose(db, { confirmed: [] }));
     await assertFails(propose(db, { confirmed: ['ava', 'ava'] }));
     await assertFails(propose(db, { paidBy: ['ava'] }));
-    await assertSucceeds(propose(db, { sideA: ['mac', 'ava'] }));
+  });
+
+  it('proposer must be first on side A', async () => {
+    const db = dbAs(env, 'ava');
+    await assertFails(propose(db, { sideA: ['mac', 'ava'] }));
+    await assertFails(propose(db, { sideA: ['mac', 'kai', 'ava'] }));
+    await assertSucceeds(propose(db, { sideA: ['ava', 'mac'] }));
+    expect(await peek('bets/new')).toMatchObject({ sideA: ['ava', 'mac'] });
   });
 
   it('rejects a subject on a side, duplicates, a person on both sides, and 9 people', async () => {
@@ -304,6 +311,38 @@ describe("join, switch, leave, I'm in", () => {
     await assertFails(move('sam', 'team', { sideA: ['mac', 'ava'] }));
     // jo swaps kai out for sam on side B.
     await assertFails(move('jo', 'team', { sideB: ['jo', 'sam'] }));
+  });
+
+  it('cannot un-confirm while staying on a side', async () => {
+    // ava (the proposer, in) takes herself out of confirmed but stays on side A.
+    await assertFails(move('ava', 'team', { confirmed: [] }));
+    await assertFails(move('ava', 'proposed', { confirmed: [] }));
+    // mac, in on `almost`, un-confirms; or joins then un-confirms in a later write.
+    await assertFails(move('mac', 'almost', { confirmed: ['ava', 'jo'] }));
+    await assertSucceeds(move('sam', 'proposed', { sideB: ['jo', 'sam'], confirmed: ['ava', 'sam'] }));
+    await assertFails(move('sam', 'proposed', { confirmed: ['ava'] }));
+    // An in switcher stays in.
+    await assertFails(move('mac', 'almost', { sideA: ['ava'], sideB: ['jo', 'kai', 'mac'], confirmed: ['ava', 'jo'] }));
+    await assertSucceeds(
+      move('mac', 'almost', { sideA: ['ava'], sideB: ['jo', 'kai', 'mac'], confirmed: ['ava', 'mac', 'jo'] }),
+    );
+    // Leaving still takes me out of confirmed.
+    await assertSucceeds(move('sam', 'proposed', { sideB: ['jo'], confirmed: ['ava'] }));
+  });
+
+  it('a joiner is added at the end, not the front', async () => {
+    // mac joins side A of team at the front, or in the middle of side B.
+    await assertFails(move('sam', 'team', { sideA: ['sam', 'ava', 'mac'], confirmed: ['ava', 'sam'] }));
+    await assertFails(move('sam', 'team', { sideB: ['jo', 'sam', 'kai'], confirmed: ['ava', 'sam'] }));
+    // kai switches to the front of side A.
+    await assertFails(
+      move('kai', 'team', { sideA: ['kai', 'ava', 'mac'], sideB: ['jo'], confirmed: ['ava', 'kai'] }),
+    );
+    // Someone already on a side cannot move themselves to the front.
+    await assertFails(move('mac', 'team', { sideA: ['mac', 'ava'] }));
+    await assertFails(move('mac', 'team', { sideA: ['mac', 'ava'], confirmed: ['ava', 'mac'] }));
+    await assertSucceeds(move('sam', 'team', { sideB: ['jo', 'kai', 'sam'], confirmed: ['ava', 'sam'] }));
+    expect(await peek('bets/team')).toMatchObject({ sideB: ['jo', 'kai', 'sam'] });
   });
 
   it('cannot add myself twice, to both sides, or to confirmed without being on a side', async () => {

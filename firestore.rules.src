@@ -341,6 +341,15 @@ service cloud.firestore {
       return after is list && after.removeAll([me]) == before.removeAll([me]);
     }
 
+    // Side `after` is side `before` after a move by `me`: unchanged if she stays on it or stays
+    // off it, `before` without her if she leaves it, and `before` with her at the end if she
+    // joins it. Nobody else's place changes, so the proposer stays first on side A.
+    function sideMoved(before, after, me) {
+      return after is list && (me in before
+        ? (me in after ? after == before : after == before.removeAll([me]))
+        : (me in after ? after == before.concat([me]) : after == before));
+    }
+
     // The status a proposed bet must take after a member move (src/model/bet.ts nextStatus):
     // void if side A is empty; active if both sides have people and all are confirmed.
     function nextStatus(a, b, c) {
@@ -387,7 +396,8 @@ service cloud.firestore {
             'stakeA', 'stakeB', 'voteStyle', 'status', 'winner', 'createdBy', 'createdAt',
             'votesA', 'votesB', 'voters', 'voterCount'])
           && validLineup(d.sideA, d.sideB, d.subjects)
-          && request.auth.uid in d.sideA
+          && d.sideA.size() > 0
+          && d.sideA[0] == request.auth.uid
           && d.createdBy == request.auth.uid
           && d.confirmed == [request.auth.uid]
           && d.paidBy == []
@@ -409,10 +419,11 @@ service cloud.firestore {
       }
 
       // Join, switch, leave, or I'm in, while proposed. Each list changes only by the mover's
-      // own id; joining or switching onto a side also marks her in; subjects can't move;
-      // confirmed holds only people on a side; and status is set to what the new lineup
-      // demands (nextStatus), so the write that completes the bet makes it active and the
-      // write that empties side A voids it.
+      // own id, and a side she joins gains her at the end; joining or switching onto a side
+      // also marks her in; once in she stays in until she leaves (no un-confirming to stall a
+      // bet); subjects can't move; confirmed holds only people on a side; and status is set
+      // to what the new lineup demands (nextStatus), so the write that completes the bet
+      // makes it active and the write that empties side A voids it.
       function moving() {
         let me = request.auth.uid;
         let o = resource.data;
@@ -422,14 +433,15 @@ service cloud.firestore {
         return o.status == 'proposed'
           && onlyChanges(['sideA', 'sideB', 'confirmed', 'status'])
           && !(me in o.subjects)
-          && onlyMeChanged(o.sideA, a, me)
-          && onlyMeChanged(o.sideB, b, me)
+          && sideMoved(o.sideA, a, me)
+          && sideMoved(o.sideB, b, me)
           && onlyMeChanged(o.confirmed, c, me)
           && validLineup(a, b, o.subjects)
           && noDups(c)
           && a.concat(b).toSet().hasAll(c)
           && (!(me in a) || me in o.sideA || me in c)
           && (!(me in b) || me in o.sideB || me in c)
+          && (!(me in o.confirmed) || me in c || !(me in a.concat(b)))
           && request.resource.data.status == nextStatus(a, b, c)
           && me in memberUids();
       }
@@ -500,13 +512,21 @@ service cloud.firestore {
             || (d.winner == 'B' && get(betTallyPath(betId)).data.B * 2 > memberCount()));
       }
 
-      // The winner marks it paid: settled -> paid, nothing else changes.
+      // A winner marks her own payment: paidBy gains exactly her id at the end, and status
+      // becomes paid on the write that covers the whole winning side (else stays settled).
+      // No lookups beyond isMember.
       function markingPaid() {
-        return onlyChanges(['status'])
-          && resource.data.status == 'settled'
-          && request.resource.data.status == 'paid'
-          && ((resource.data.winner == 'A' && isSelf(resource.data.sideA))
-            || (resource.data.winner == 'B' && isSelf(resource.data.sideB)));
+        let me = request.auth.uid;
+        let o = resource.data;
+        let p = request.resource.data.paidBy;
+        let won = o.winner == 'A' ? o.sideA : o.sideB;
+        return o.status == 'settled'
+          && o.winner in ['A', 'B']
+          && onlyChanges(['paidBy', 'status'])
+          && me in won
+          && !(me in o.paidBy)
+          && p == o.paidBy.concat([me])
+          && request.resource.data.status == (p.toSet() == won.toSet() ? 'paid' : 'settled');
       }
 
       // One ballot per member, id = her uid. Only she (and the admin) can read it.

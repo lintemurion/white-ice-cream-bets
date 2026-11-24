@@ -3,7 +3,7 @@ import { assertFails, assertSucceeds, type RulesTestEnvironment } from '@firebas
 import { doc, getDoc, increment, setDoc, updateDoc, writeBatch, type Firestore } from 'firebase/firestore';
 import { dbAs, makeEnv, seed } from './helpers';
 
-// ava is side A, jo is side B.
+// ava is side A, jo is side B (anonSettled: ava & maya beat jo).
 const MEMBERS = ['ava', 'jo', 'maya', 'priya', 'sam', 'zoe'];
 
 const keys = (...uids: string[]) => Object.fromEntries(uids.map((u) => [u, true as const]));
@@ -26,7 +26,15 @@ beforeEach(async () => {
       anonActive: { status: 'active', voteStyle: 'anonymous' },
       fourOne: { status: 'voting', voteStyle: 'anonymous', voters: keys('ava', 'jo', 'maya', 'priya', 'sam'), voterCount: 5 },
       threeThree: { status: 'voting', voteStyle: 'anonymous', voters: keys(...MEMBERS), voterCount: 6 },
-      anonSettled: { status: 'settled', winner: 'A', voteStyle: 'anonymous', voterCount: 4 },
+      anonSettled: {
+        sideA: ['ava', 'maya'],
+        sideB: ['jo'],
+        confirmed: ['ava', 'maya', 'jo'],
+        status: 'settled',
+        winner: 'A',
+        voteStyle: 'anonymous',
+        voterCount: 4,
+      },
       // Anonymous bet whose (admin-written) vote maps would carry an open settle.
       anonWithMaps: { status: 'voting', voteStyle: 'anonymous', votesA: keys('ava', 'maya', 'priya', 'sam') },
       // Open bet with a stray tally that would carry an anonymous settle.
@@ -240,6 +248,17 @@ describe('settle after admission (anonymous)', () => {
 
   it('settle is denied after an admission raises the bar', () =>
     assertFails(updateDoc(bet('zoe', 'fourA'), { status: 'settled', winner: 'A' })));
+});
+
+describe('mark paid (anonymous)', () => {
+  it('each winner marks their own payment; the last one sets paid', async () => {
+    await assertFails(updateDoc(bet('jo', 'anonSettled'), { paidBy: ['jo'] }));
+    await assertFails(updateDoc(bet('ava', 'anonSettled'), { paidBy: ['ava'], status: 'paid' }));
+    await assertSucceeds(updateDoc(bet('ava', 'anonSettled'), { paidBy: ['ava'] }));
+    await assertFails(updateDoc(bet('maya', 'anonSettled'), { paidBy: ['ava', 'maya'] }));
+    await assertSucceeds(updateDoc(bet('maya', 'anonSettled'), { paidBy: ['ava', 'maya'], status: 'paid' }));
+    expect(await peek('bets/anonSettled')).toMatchObject({ paidBy: ['ava', 'maya'], status: 'paid' });
+  });
 });
 
 describe('anonymous misc', () => {
