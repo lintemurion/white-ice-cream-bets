@@ -74,6 +74,19 @@ describe('owesLine', () => {
     );
   });
 
+  it("owesLine: 'Jo & Kayla owe Mac & Kaden: a pizza' and singular 'Jo owes Ava: $5'", () => {
+    const names = { mac: 'Mac', kaden: 'Kaden', jo: 'Jo', kayla: 'Kayla', ava: 'Ava', sam: 'Sam' };
+    const team = betDoc({ sideA: ['mac', 'kaden'], sideB: ['jo', 'kayla'], stakeB: 'a pizza', status: 'settled', winner: 'A' });
+    expect(owesLine(team, names)).toBe('Jo & Kayla owe Mac & Kaden: a pizza');
+    expect(owesLine(betDoc({ status: 'paid', winner: 'A', stakeB: '$5' }), names)).toBe('Jo owes Ava: $5');
+    // One loser owing a team, and three losers.
+    expect(owesLine(betDoc({ sideA: ['ava', 'sam'], winner: 'A', status: 'settled', stakeB: '$5' }), names)).toBe(
+      'Jo owes Ava & Sam: $5',
+    );
+    const three = betDoc({ sideA: ['mac'], sideB: ['jo', 'kayla', 'sam'], stakeB: 'fries', status: 'settled', winner: 'A' });
+    expect(owesLine(three, names)).toBe('Jo, Kayla +1 owe Mac: fries');
+  });
+
   it('throws when the bet has no winner', () => {
     expect(() => owesLine(betDoc(), { ava: 'Ava', jo: 'Jo' })).toThrow();
   });

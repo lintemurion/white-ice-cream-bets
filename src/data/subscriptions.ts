@@ -10,6 +10,7 @@ import {
   type Query,
 } from 'firebase/firestore';
 import { auth, db } from '../firebase';
+import { normalizeBet } from '../model/bet';
 import type { BetDoc, BetTally, GroupDoc, JoinRequestDoc, JoinTally, Uid, UserDoc } from '../model/types';
 
 export type WithId<T> = T & { id: string };
@@ -40,8 +41,15 @@ function useDocData<T>(ref: () => DocumentReference | null, key: string): Live<T
   return state;
 }
 
-/** Live query. data undefined = loading (or disabled). Errors set `error`, never an empty list. */
-function useQueryData<T>(q: () => Query | null, key: string): Live<WithId<T>[]> {
+/**
+ * Live query. data undefined = loading (or disabled). Errors set `error`, never an empty list.
+ * `read` turns each raw doc into a T (default: taken as is).
+ */
+function useQueryData<T>(
+  q: () => Query | null,
+  key: string,
+  read: (raw: Record<string, unknown>) => T = (raw) => raw as T,
+): Live<WithId<T>[]> {
   const [state, setState] = useState<Live<WithId<T>[]>>({ data: undefined, error: false });
   useEffect(() => {
     setState({ data: undefined, error: false });
@@ -49,7 +57,7 @@ function useQueryData<T>(q: () => Query | null, key: string): Live<WithId<T>[]> 
     if (!query_) return;
     return onSnapshot(
       query_,
-      (snap) => setState({ data: snap.docs.map((d) => ({ ...(d.data() as T), id: d.id })), error: false }),
+      (snap) => setState({ data: snap.docs.map((d) => ({ ...read(d.data()), id: d.id })), error: false }),
       (err) => {
         console.error(`snapshot ${key}`, err);
         setState({ data: undefined, error: true });
@@ -97,8 +105,9 @@ export function useAllUsers(enabled: boolean) {
   return useQueryData<UserDoc>(() => (enabled ? collection(db, 'users') : null), `allusers:${enabled}`);
 }
 
+/** Every bet, read through normalizeBet so bets written before Upgrade data look like new ones. */
 export function useBets(enabled: boolean) {
-  return useQueryData<BetDoc>(() => (enabled ? collection(db, 'bets') : null), `bets:${enabled}`);
+  return useQueryData<BetDoc>(() => (enabled ? collection(db, 'bets') : null), `bets:${enabled}`, normalizeBet);
 }
 
 export function useJoinRequests(enabled: boolean) {
