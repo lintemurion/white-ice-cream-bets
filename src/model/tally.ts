@@ -1,4 +1,7 @@
+import { sideLabel } from './bet';
 import type { BetDoc, Uid, VoteStyle } from './types';
+
+export { FORMER } from './bet';
 
 /** Votes one side needs to win: strictly more than half of current members. */
 export function needed(memberCount: number): number {
@@ -37,13 +40,14 @@ export function voteProgress(p: VoteProgressInput): string {
   return more > 0 ? `${head} ${more} more for ${name} settles it.` : head;
 }
 
-/** Shown for a uid with no name on record. */
-export const FORMER = 'Former member';
-
-/** "<loser> owes <winner>: <loser's stake>" for a settled or paid bet. */
+/**
+ * "<losers> owe <winners>: <losing side's stake>" for a settled or paid bet, names per
+ * sideLabel; "owes" when one person lost.
+ */
 export function owesLine(bet: BetDoc, names: Record<Uid, string>): string {
   if (bet.winner === null) throw new Error('owesLine needs a bet with a winner');
   const [winner, loser, stake] =
     bet.winner === 'A' ? [bet.sideA, bet.sideB, bet.stakeB] : [bet.sideB, bet.sideA, bet.stakeA];
-  return `${names[loser] ?? FORMER} owes ${names[winner] ?? FORMER}: ${stake}`;
+  const verb = loser.length >= 2 ? 'owe' : 'owes';
+  return `${sideLabel(loser, names)} ${verb} ${sideLabel(winner, names)}: ${stake}`;
 }

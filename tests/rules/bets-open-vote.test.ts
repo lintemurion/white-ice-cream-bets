@@ -4,9 +4,18 @@ import { deleteField, doc, getDoc, updateDoc, type Firestore } from 'firebase/fi
 import { dbAs, makeEnv, seed } from './helpers';
 
 // ava is side A, jo is side B, maya is the subject of `voting`.
+// In the team bets, ava & priya beat jo & sam, about maya.
 const MEMBERS = ['ava', 'jo', 'maya', 'priya', 'sam', 'zoe'];
 
 const votes = (...uids: string[]) => Object.fromEntries(uids.map((u) => [u, true as const]));
+
+const team = {
+  sideA: ['ava', 'priya'],
+  sideB: ['jo', 'sam'],
+  subjects: ['maya'],
+  confirmed: ['ava', 'priya', 'jo', 'sam'],
+  votesA: votes('ava', 'maya', 'priya', 'zoe'),
+};
 
 let env: RulesTestEnvironment;
 
@@ -22,7 +31,7 @@ beforeEach(async () => {
     members: MEMBERS,
     pending: ['riley'],
     bets: {
-      voting: { status: 'voting', subject: 'maya' },
+      voting: { status: 'voting', sideA: ['ava'], sideB: ['jo'], subjects: ['maya'] },
       voted: { status: 'voting', votesA: votes('priya') },
       active: { status: 'active' },
       anon: { status: 'voting', voteStyle: 'anonymous' },
@@ -31,6 +40,10 @@ beforeEach(async () => {
       fourB: { status: 'voting', votesA: votes('ava'), votesB: votes('jo', 'maya', 'priya', 'sam') },
       settledA: { status: 'settled', winner: 'A', votesA: votes('ava', 'maya', 'priya', 'sam') },
       settledB: { status: 'settled', winner: 'B', votesB: votes('jo', 'maya', 'priya', 'sam') },
+      teamSettled: { ...team, status: 'settled', winner: 'A' },
+      teamHalfPaid: { ...team, status: 'settled', winner: 'A', paidBy: ['ava'] },
+      teamVoting: { ...team, status: 'voting' },
+      teamActive: { ...team, status: 'active' },
     },
     betTallies: { anon: { A: 0, B: 0 } },
   });
@@ -148,23 +161,64 @@ describe('settle after admission', () => {
 });
 
 describe('mark paid', () => {
-  it('winner marks paid; loser and bystander cannot', async () => {
-    await assertFails(updateDoc(bet('jo', 'settledA'), { status: 'paid' }));
-    await assertFails(updateDoc(bet('maya', 'settledA'), { status: 'paid' }));
-    await assertSucceeds(updateDoc(bet('ava', 'settledA'), { status: 'paid' }));
-    expect(await peek('bets/settledA')).toMatchObject({ status: 'paid', winner: 'A' });
-    // Winner B is side B.
-    await assertFails(updateDoc(bet('ava', 'settledB'), { status: 'paid' }));
-    await assertSucceeds(updateDoc(bet('jo', 'settledB'), { status: 'paid' }));
+  it('a winner on a 2-person winning side marks paid; bet stays settled at 1 of 2', async () => {
+    // Claiming paid while priya hasn't is refused.
+    await assertFails(updateDoc(bet('ava', 'teamSettled'), { paidBy: ['ava'], status: 'paid' }));
+    await assertSucceeds(updateDoc(bet('ava', 'teamSettled'), { paidBy: ['ava'] }));
+    expect(await peek('bets/teamSettled')).toMatchObject({ paidBy: ['ava'], status: 'settled', winner: 'A' });
   });
 
-  it('mark paid changes only status, and only from settled', async () => {
-    await assertFails(updateDoc(bet('ava', 'settledA'), { status: 'paid', winner: 'B' }));
-    await assertFails(updateDoc(bet('ava', 'fourA'), { status: 'paid' }));
+  it('the last winner marks paid and must set status paid', async () => {
+    await assertFails(updateDoc(bet('priya', 'teamHalfPaid'), { paidBy: ['ava', 'priya'] }));
+    await assertFails(updateDoc(bet('priya', 'teamHalfPaid'), { paidBy: ['ava', 'priya'], status: 'void' }));
+    await assertSucceeds(updateDoc(bet('priya', 'teamHalfPaid'), { paidBy: ['ava', 'priya'], status: 'paid' }));
+    expect(await peek('bets/teamHalfPaid')).toMatchObject({ paidBy: ['ava', 'priya'], status: 'paid' });
+    // A 1-person winning side: the only winner marks it paid in one step.
+    await assertFails(updateDoc(bet('jo', 'settledB'), { paidBy: ['jo'] }));
+    await assertSucceeds(updateDoc(bet('jo', 'settledB'), { paidBy: ['jo'], status: 'paid' }));
   });
 
-  it('admin marks paid', async () => {
-    await assertSucceeds(updateDoc(bet('admin', 'settledA'), { status: 'paid' }));
-    expect(await peek('bets/settledA')).toMatchObject({ status: 'paid' });
+  it('a loser, a bystander, or a subject cannot mark paid', async () => {
+    for (const who of ['jo', 'sam', 'zoe', 'maya']) {
+      await assertFails(updateDoc(bet(who, 'teamSettled'), { paidBy: [who] }));
+      await assertFails(updateDoc(bet(who, 'teamHalfPaid'), { paidBy: ['ava', who], status: 'paid' }));
+    }
+    // Winner B is side B, so ava lost settledB.
+    await assertFails(updateDoc(bet('ava', 'settledB'), { paidBy: ['ava'], status: 'paid' }));
+    // Pending users and signed-out visitors cannot either.
+    await assertFails(updateDoc(bet('riley', 'teamSettled'), { paidBy: ['riley'] }));
+    await assertFails(updateDoc(doc(dbAs(env, null), 'bets/teamSettled'), { paidBy: ['ava'] }));
+  });
+
+  it('a winner cannot add another winner to paidBy, or add themselves twice', async () => {
+    await assertFails(updateDoc(bet('ava', 'teamSettled'), { paidBy: ['priya'] }));
+    await assertFails(updateDoc(bet('ava', 'teamSettled'), { paidBy: ['ava', 'priya'], status: 'paid' }));
+    await assertFails(updateDoc(bet('ava', 'teamHalfPaid'), { paidBy: ['ava', 'ava'] }));
+    await assertFails(updateDoc(bet('ava', 'teamHalfPaid'), { paidBy: ['ava', 'ava'], status: 'paid' }));
+    // Nor drop or replace anyone already there, nor write a non-list.
+    await assertFails(updateDoc(bet('priya', 'teamHalfPaid'), { paidBy: ['priya'] }));
+    await assertFails(updateDoc(bet('priya', 'teamHalfPaid'), { paidBy: ['priya', 'ava'], status: 'paid' }));
+    await assertFails(updateDoc(bet('ava', 'teamSettled'), { paidBy: 'ava' }));
+    // Status alone (the old mark paid) and extra fields are refused.
+    await assertFails(updateDoc(bet('ava', 'settledA'), { status: 'paid' }));
+    await assertFails(updateDoc(bet('ava', 'teamSettled'), { paidBy: ['ava'], winner: 'B' }));
+    await assertFails(updateDoc(bet('jo', 'settledB'), { paidBy: ['jo'], status: 'paid', stakeA: '$0' }));
+  });
+
+  it('cannot mark paid on a bet that is not settled', async () => {
+    await assertFails(updateDoc(bet('ava', 'teamVoting'), { paidBy: ['ava'] }));
+    await assertFails(updateDoc(bet('ava', 'teamActive'), { paidBy: ['ava'] }));
+    await assertFails(updateDoc(bet('ava', 'fourA'), { paidBy: ['ava'], status: 'paid' }));
+    // Nor again once paid.
+    await assertSucceeds(updateDoc(bet('jo', 'settledB'), { paidBy: ['jo'], status: 'paid' }));
+    await assertFails(updateDoc(bet('jo', 'settledB'), { paidBy: ['jo', 'jo'], status: 'paid' }));
+    await assertFails(updateDoc(bet('jo', 'settledB'), { paidBy: [], status: 'settled' }));
+  });
+
+  it('admin can set paidBy for a winner', async () => {
+    await assertSucceeds(updateDoc(bet('admin', 'teamSettled'), { paidBy: ['priya'] }));
+    expect(await peek('bets/teamSettled')).toMatchObject({ paidBy: ['priya'], status: 'settled' });
+    await assertSucceeds(updateDoc(bet('admin', 'teamSettled'), { paidBy: ['priya', 'ava'], status: 'paid' }));
+    expect(await peek('bets/teamSettled')).toMatchObject({ paidBy: ['priya', 'ava'], status: 'paid' });
   });
 });

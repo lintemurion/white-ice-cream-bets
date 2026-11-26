@@ -1,7 +1,9 @@
 import { useState } from 'preact/hooks';
 import type { NewBetInput } from '../data/bets';
+import { MAX_PEOPLE } from '../model/bet';
 import type { Uid, VoteStyle } from '../model/types';
 import { errorMessage } from './errorMessage';
+import { PeoplePicker } from './PeoplePicker';
 
 export const DESCRIPTION_MAX = 2000;
 export const STAKE_MAX = 500;
@@ -18,10 +20,12 @@ export function NewBet(props: {
   onSubmit: (input: NewBetInput) => Promise<void>;
   onCancel?: () => void;
 }) {
-  const others = props.members.filter((m) => m.uid !== props.me);
+  const others = props.members.filter((m) => m.uid !== props.me).map((m) => ({ uid: m.uid, name: m.displayName }));
+  const myName = props.members.find((m) => m.uid === props.me)?.displayName ?? 'Me';
   const [description, setDescription] = useState('');
-  const [subject, setSubject] = useState<Uid>('');
-  const [opponent, setOpponent] = useState<Uid>('');
+  const [subjects, setSubjects] = useState<Uid[]>([]);
+  const [teammates, setTeammates] = useState<Uid[]>([]);
+  const [opponents, setOpponents] = useState<Uid[]>([]);
   const [stakeMine, setStakeMine] = useState('');
   const [stakeTheirs, setStakeTheirs] = useState('');
   const [theirsEdited, setTheirsEdited] = useState(false);
@@ -29,14 +33,12 @@ export function NewBet(props: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const opponentName = others.find((m) => m.uid === opponent)?.displayName ?? 'they';
-  const valid =
-    description.trim().length > 0 && opponent !== '' && stakeMine.trim().length > 0 && stakeTheirs.trim().length > 0;
-
-  function changeSubject(uid: Uid) {
-    setSubject(uid);
-    if (uid !== '' && uid === opponent) setOpponent('');
-  }
+  const valid = description.trim().length > 0 && stakeMine.trim().length > 0 && stakeTheirs.trim().length > 0;
+  // Me plus everyone picked; nobody can be in two lists, so this counts distinct people.
+  const full = 1 + subjects.length + teammates.length + opponents.length >= MAX_PEOPLE;
+  /** Everyone picked in the other two lists, so no one lands in two. */
+  const takenBesides = (mine: Uid[]) =>
+    new Set([...subjects, ...teammates, ...opponents].filter((u) => !mine.includes(u)));
   function changeMine(v: string) {
     const next = v.slice(0, STAKE_MAX);
     setStakeMine(next);
@@ -51,8 +53,9 @@ export function NewBet(props: {
     try {
       await props.onSubmit({
         description: description.trim(),
-        opponent,
-        subject: subject === '' ? null : subject,
+        teammates,
+        opponents,
+        subjects,
         stakeMine: stakeMine.trim(),
         stakeTheirs: stakeTheirs.trim(),
         voteStyle,
@@ -79,31 +82,40 @@ export function NewBet(props: {
           />
           <Counter value={description} max={DESCRIPTION_MAX} />
         </label>
+        <PeoplePicker
+          label="About anyone?"
+          hint="(optional)"
+          options={others}
+          selected={subjects}
+          disabled={takenBesides(subjects)}
+          full={full}
+          onChange={setSubjects}
+        />
+        <PeoplePicker
+          label="My side:"
+          options={others}
+          selected={teammates}
+          disabled={takenBesides(teammates)}
+          full={full}
+          fixed={`${myName} (you)`}
+          onChange={setTeammates}
+        />
+        <PeoplePicker
+          label="Against:"
+          hint="(leave empty for an open challenge)"
+          options={others}
+          selected={opponents}
+          disabled={takenBesides(opponents)}
+          full={full}
+          onChange={setOpponents}
+        />
         <label>
-          About someone?
-          <select value={subject} onChange={(e) => changeSubject(val(e))}>
-            <option value="">(none)</option>
-            {others.map((m) => (
-              <option value={m.uid}>{m.displayName}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Me vs:
-          <select value={opponent} onChange={(e) => setOpponent(val(e))}>
-            <option value="">Choose...</option>
-            {others.map((m) => (
-              <option value={m.uid} disabled={m.uid === subject}>{m.displayName}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          If I lose:
+          If my side loses:
           <textarea rows={2} value={stakeMine} maxLength={STAKE_MAX} onInput={(e) => changeMine(val(e))} />
           <Counter value={stakeMine} max={STAKE_MAX} />
         </label>
         <label>
-          {opponent === '' ? 'If they lose:' : `If ${opponentName} loses:`}
+          If their side loses:
           <textarea
             rows={2}
             value={stakeTheirs}

@@ -9,98 +9,120 @@ const members = [
   { uid: 'me', displayName: 'Ava' },
   { uid: 'jo', displayName: 'Jo' },
   { uid: 'pr', displayName: 'Priya' },
+  { uid: 'sam', displayName: 'Sam' },
 ];
 
-function setup(onSubmit = vi.fn().mockResolvedValue(undefined)) {
-  render(<NewBet me="me" members={members} onSubmit={onSubmit} />);
+const many = [
+  ...members,
+  ...['Kayla', 'Mac', 'Kaden', 'Lu', 'Rae', 'Tom'].map((n) => ({ uid: n.toLowerCase(), displayName: n })),
+];
+
+function setup(onSubmit = vi.fn().mockResolvedValue(undefined), list = members) {
+  render(<NewBet me="me" members={list} onSubmit={onSubmit} />);
   return onSubmit;
 }
 const type = (el: HTMLElement, value: string) => fireEvent.input(el, { target: { value } });
-const optionsOf = (label: string) =>
-  Array.from((screen.getByLabelText(label) as HTMLSelectElement).options).map((o) => ({
-    text: o.textContent,
-    disabled: o.disabled,
-  }));
+const offered = (label: string) =>
+  Array.from((screen.getByLabelText(label) as HTMLSelectElement).options)
+    .slice(1)
+    .map((o) => o.textContent);
+const pick = (label: string, uid: string) => fireEvent.change(screen.getByLabelText(label), { target: { value: uid } });
 
 describe('NewBet', () => {
-  it('greys out the chosen subject in the opponent picker', () => {
+  it('a person picked as a subject is disabled in both side pickers and vice versa', () => {
     setup();
-    fireEvent.change(screen.getByLabelText('About someone?'), { target: { value: 'jo' } });
-    const jo = optionsOf('Me vs:').find((o) => o.text === 'Jo');
-    expect(jo?.disabled).toBe(true);
-    expect(optionsOf('Me vs:').find((o) => o.text === 'Priya')?.disabled).toBe(false);
+    pick('About anyone?', 'jo');
+    expect(offered('My side:')).not.toContain('Jo');
+    expect(offered('Against:')).not.toContain('Jo');
+    pick('Against:', 'pr');
+    expect(offered('About anyone?')).not.toContain('Priya');
+    expect(offered('My side:')).not.toContain('Priya');
+    expect(offered('My side:')).toEqual(['Sam']);
   });
 
-  it('clears the opponent when the subject becomes the opponent', () => {
+  it('me is on my side and cannot be removed', () => {
     setup();
-    fireEvent.change(screen.getByLabelText('Me vs:'), { target: { value: 'jo' } });
-    fireEvent.change(screen.getByLabelText('About someone?'), { target: { value: 'jo' } });
-    expect((screen.getByLabelText('Me vs:') as HTMLSelectElement).value).toBe('');
+    expect(screen.getByText('Ava (you)')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Remove Ava' })).toBeNull();
+    for (const label of ['About anyone?', 'My side:', 'Against:']) expect(offered(label)).not.toContain('Ava');
   });
 
-  it('excludes me from opponent and allows me as neither', () => {
-    setup();
-    expect(optionsOf('Me vs:').map((o) => o.text)).not.toContain('Ava');
-    expect(optionsOf('About someone?').map((o) => o.text)).not.toContain('Ava');
-    expect(optionsOf('About someone?')[0].text).toMatch(/none/i);
+  it('picking stops at 8 people', () => {
+    setup(undefined, many);
+    for (const uid of ['jo', 'pr', 'sam']) pick('My side:', uid);
+    for (const uid of ['kayla', 'mac', 'kaden']) pick('Against:', uid);
+    pick('About anyone?', 'lu');
+    // Me + 7 picked = 8.
+    for (const label of ['About anyone?', 'My side:', 'Against:']) {
+      expect((screen.getByLabelText(label) as HTMLSelectElement).disabled).toBe(true);
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Lu' }));
+    expect((screen.getByLabelText('Against:') as HTMLSelectElement).disabled).toBe(false);
+  });
+
+  it('empty Against submits an open challenge', async () => {
+    const onSubmit = setup();
+    type(screen.getByLabelText("What's the bet?"), '  Snow before Dec 1 ');
+    type(screen.getByLabelText('If my side loses:'), ' $5 ');
+    fireEvent.click(screen.getByRole('button', { name: 'Propose bet' }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit).toHaveBeenCalledWith({
+      description: 'Snow before Dec 1',
+      teammates: [],
+      opponents: [],
+      subjects: [],
+      stakeMine: '$5',
+      stakeTheirs: '$5',
+      voteStyle: 'open',
+    });
+  });
+
+  it('submits teams, subjects and the chosen voteStyle', async () => {
+    const onSubmit = setup();
+    type(screen.getByLabelText("What's the bet?"), 'x');
+    pick('About anyone?', 'jo');
+    pick('My side:', 'sam');
+    pick('Against:', 'pr');
+    type(screen.getByLabelText('If my side loses:'), 'a pizza');
+    type(screen.getByLabelText('If their side loses:'), 'a coffee');
+    fireEvent.click(screen.getByLabelText('Anonymous'));
+    fireEvent.click(screen.getByRole('button', { name: 'Propose bet' }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit).toHaveBeenCalledWith({
+      description: 'x',
+      teammates: ['sam'],
+      opponents: ['pr'],
+      subjects: ['jo'],
+      stakeMine: 'a pizza',
+      stakeTheirs: 'a coffee',
+      voteStyle: 'anonymous',
+    });
   });
 
   it('pre-fills their stake to match mine until edited', () => {
     setup();
-    fireEvent.change(screen.getByLabelText('Me vs:'), { target: { value: 'pr' } });
-    type(screen.getByLabelText('If I lose:'), 'a ride');
-    expect((screen.getByLabelText('If Priya loses:') as HTMLTextAreaElement).value).toBe('a ride');
-    type(screen.getByLabelText('If Priya loses:'), 'a coffee');
-    type(screen.getByLabelText('If I lose:'), 'a ride to the mall');
-    expect((screen.getByLabelText('If Priya loses:') as HTMLTextAreaElement).value).toBe('a coffee');
+    type(screen.getByLabelText('If my side loses:'), 'a ride');
+    expect((screen.getByLabelText('If their side loses:') as HTMLTextAreaElement).value).toBe('a ride');
+    type(screen.getByLabelText('If their side loses:'), 'a coffee');
+    type(screen.getByLabelText('If my side loses:'), 'a ride to the mall');
+    expect((screen.getByLabelText('If their side loses:') as HTMLTextAreaElement).value).toBe('a coffee');
   });
 
   it('Propose bet is disabled for whitespace-only description', () => {
     setup();
-    fireEvent.change(screen.getByLabelText('Me vs:'), { target: { value: 'pr' } });
-    type(screen.getByLabelText('If I lose:'), 'a ride');
+    type(screen.getByLabelText('If my side loses:'), 'a ride');
     type(screen.getByLabelText("What's the bet?"), '   \n ');
     expect((screen.getByRole('button', { name: 'Propose bet' }) as HTMLButtonElement).disabled).toBe(true);
     type(screen.getByLabelText("What's the bet?"), ' real bet ');
     expect((screen.getByRole('button', { name: 'Propose bet' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it('submits trimmed NewBetInput with the chosen voteStyle', async () => {
-    const onSubmit = setup();
-    type(screen.getByLabelText("What's the bet?"), '  Snow before Dec 1 ');
-    fireEvent.change(screen.getByLabelText('About someone?'), { target: { value: 'jo' } });
-    fireEvent.change(screen.getByLabelText('Me vs:'), { target: { value: 'pr' } });
-    type(screen.getByLabelText('If I lose:'), ' $5 ');
-    fireEvent.click(screen.getByLabelText('Anonymous'));
-    fireEvent.click(screen.getByRole('button', { name: 'Propose bet' }));
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-    expect(onSubmit).toHaveBeenCalledWith({
-      description: 'Snow before Dec 1',
-      opponent: 'pr',
-      subject: 'jo',
-      stakeMine: '$5',
-      stakeTheirs: '$5',
-      voteStyle: 'anonymous',
-    });
-  });
-
-  it('defaults to open votes and no subject', async () => {
-    const onSubmit = setup();
-    type(screen.getByLabelText("What's the bet?"), 'x');
-    fireEvent.change(screen.getByLabelText('Me vs:'), { target: { value: 'pr' } });
-    type(screen.getByLabelText('If I lose:'), 'y');
-    fireEvent.click(screen.getByRole('button', { name: 'Propose bet' }));
-    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
-    expect(onSubmit.mock.calls[0][0]).toMatchObject({ voteStyle: 'open', subject: null });
-  });
-
   it('shows a submit error inline', async () => {
-    setup(vi.fn().mockRejectedValue(new Error('Description cannot be blank')));
+    setup(vi.fn().mockRejectedValue(new Error('The group needs a quick upgrade. Ask Kyle.')));
     type(screen.getByLabelText("What's the bet?"), 'x');
-    fireEvent.change(screen.getByLabelText('Me vs:'), { target: { value: 'pr' } });
-    type(screen.getByLabelText('If I lose:'), 'y');
+    type(screen.getByLabelText('If my side loses:'), 'y');
     fireEvent.click(screen.getByRole('button', { name: 'Propose bet' }));
-    expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'Description cannot be blank');
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'The group needs a quick upgrade. Ask Kyle.');
   });
 
   it('stops input at 2000 chars for description and 500 per stake, counter shows near the limit', () => {
@@ -111,7 +133,7 @@ describe('NewBet', () => {
     type(desc, 'x'.repeat(2100));
     expect(desc.value.length).toBe(2000);
     expect(screen.getByText('2000 / 2000')).toBeTruthy();
-    const mine = screen.getByLabelText('If I lose:') as HTMLTextAreaElement;
+    const mine = screen.getByLabelText('If my side loses:') as HTMLTextAreaElement;
     type(mine, 'y'.repeat(399));
     expect(screen.queryByText('399 / 500')).toBeNull();
     type(mine, 'y'.repeat(450));

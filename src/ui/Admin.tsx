@@ -1,8 +1,10 @@
 import { useState } from 'preact/hooks';
+import { everyone, MAX_PEOPLE, sideLabel } from '../model/bet';
 import type { BetDoc, JoinRequestDoc, Uid, UserDoc } from '../model/types';
 import { FORMER } from '../model/tally';
 import type { BetPatch } from '../data/admin';
 import { errorMessage } from './errorMessage';
+import { PeoplePicker } from './PeoplePicker';
 
 export interface AdminActions {
   initGroup(): Promise<void>;
@@ -15,7 +17,10 @@ export interface AdminActions {
   deleteBet(betId: string): Promise<void>;
   reopenVote(betId: string): Promise<void>;
   clearVote(betId: string, voter: Uid): Promise<void>;
-  markPaid(betId: string): Promise<void>;
+  /** Marks one winner paid for her (say she was removed before she could). */
+  markPaidFor(betId: string, winner: Uid): Promise<void>;
+  /** Builds group/members and converts old-format bets; resolves to what it wrote. */
+  upgradeData(): Promise<{ members: number; bets: number }>;
   signOut(): void;
 }
 
@@ -26,8 +31,12 @@ export interface AdminProps {
   memberCount: number;
   /** True when group/main does not exist yet. */
   groupMissing: boolean;
+  /** True while Upgrade data has work to do. */
+  needsUpgrade: boolean;
   actions: AdminActions;
 }
+
+const sameSet = (a: Uid[], b: Uid[]) => a.length === b.length && a.every((u) => b.includes(u));
 
 /** Busy flag and inline error shared by a row's actions. */
 function useRun() {
@@ -156,7 +165,7 @@ function BetRow(props: { id: string; bet: BetDoc; names: Record<Uid, string>; me
   const [description, setDescription] = useState(bet.description);
   const [stakeA, setStakeA] = useState(bet.stakeA);
   const [stakeB, setStakeB] = useState(bet.stakeB);
-  const [subject, setSubject] = useState(bet.subject ?? '');
+  const [subjects, setSubjects] = useState<Uid[]>(bet.subjects);
   const { busy, error, run } = useRun();
   const nameOf = (u: Uid) => names[u] ?? FORMER;
 
@@ -166,11 +175,21 @@ function BetRow(props: { id: string; bet: BetDoc; names: Record<Uid, string>; me
       : bet.voteStyle === 'open'
         ? [...Object.keys(bet.votesA), ...Object.keys(bet.votesB)]
         : Object.keys(bet.voters);
+  // Current members, plus any subject who has since left so her chip still has a name.
+  const subjectOptions = [
+    ...Object.entries(members).map(([uid, name]) => ({ uid, name })),
+    ...bet.subjects
+      .filter((u) => !(u in members))
+      .map((uid) => ({ uid, name: names[uid] ? `${names[uid]} (former)` : FORMER })),
+  ];
+  const sides = everyone(bet);
+  const winners = bet.winner === 'A' ? bet.sideA : bet.winner === 'B' ? bet.sideB : [];
+  const unpaid = bet.status === 'settled' ? winners.filter((u) => !bet.paidBy.includes(u)) : [];
   const settledLike = bet.status === 'settled' || bet.status === 'paid';
 
   return (
     <li class="card" data-testid={`bet-${id}`}>
-      <p class="title">{nameOf(bet.sideA)} vs {nameOf(bet.sideB)} ({bet.status}, {bet.voteStyle})</p>
+      <p class="title">{sideLabel(bet.sideA, names)} vs {sideLabel(bet.sideB, names)} ({bet.status}, {bet.voteStyle})</p>
       <label>
         Description
         <textarea value={description} onInput={(e) => setDescription((e.target as HTMLTextAreaElement).value)} />
@@ -183,18 +202,14 @@ function BetRow(props: { id: string; bet: BetDoc; names: Record<Uid, string>; me
         Stake B
         <input type="text" value={stakeB} onInput={(e) => setStakeB((e.target as HTMLInputElement).value)} />
       </label>
-      <label>
-        Subject
-        <select value={subject} onChange={(e) => setSubject((e.target as HTMLSelectElement).value)}>
-          <option value="">None</option>
-          {bet.subject && !(bet.subject in members) && (
-            <option value={bet.subject}>{names[bet.subject] ? `${names[bet.subject]} (former)` : 'Former member'}</option>
-          )}
-          {Object.entries(members)
-            .filter(([u]) => u !== bet.sideA && u !== bet.sideB)
-            .map(([u, n]) => <option key={u} value={u}>{n}</option>)}
-        </select>
-      </label>
+      <PeoplePicker
+        label="Subjects"
+        options={subjectOptions}
+        selected={subjects}
+        disabled={new Set(sides)}
+        full={sides.length + subjects.length >= MAX_PEOPLE}
+        onChange={setSubjects}
+      />
       <div class="row">
         <button
           type="button"
@@ -202,17 +217,17 @@ function BetRow(props: { id: string; bet: BetDoc; names: Record<Uid, string>; me
           disabled={busy}
           onClick={() => {
             const patch: BetPatch = { description, stakeA, stakeB };
-            if (subject !== (bet.subject ?? '')) patch.subject = subject || null;
+            if (!sameSet(subjects, bet.subjects)) patch.subjects = subjects;
             return run(() => actions.editBet(id, patch));
           }}
         >
           Save
         </button>
-        {bet.status === 'settled' && (
-          <button type="button" class="btn primary" disabled={busy} onClick={() => run(() => actions.markPaid(id))}>
-            Mark paid
+        {unpaid.map((u) => (
+          <button key={u} type="button" class="btn primary" disabled={busy} onClick={() => run(() => actions.markPaidFor(id, u))}>
+            Mark {nameOf(u)} paid
           </button>
-        )}
+        ))}
         {settledLike && (
           <button type="button" class="btn" disabled={busy} onClick={() => run(() => actions.reopenVote(id))}>
             Reopen vote
@@ -237,6 +252,12 @@ function BetRow(props: { id: string; bet: BetDoc; names: Record<Uid, string>; me
 export function Admin(props: AdminProps) {
   const { users, actions } = props;
   const setup = useRun();
+  const upgrade = useRun();
+  const [upgraded, setUpgraded] = useState<{ members: number; bets: number } | null>(null);
+  const runUpgrade = () =>
+    upgrade.run(async () => {
+      setUpgraded(await actions.upgradeData());
+    });
   const names: Record<Uid, string> = {};
   const members: Record<Uid, string> = {};
   for (const u of users) if (u.doc.status === 'member' || u.doc.status === 'former') names[u.uid] = u.doc.displayName;
@@ -258,6 +279,20 @@ export function Admin(props: AdminProps) {
             Set up group
           </button>
           <Err error={setup.error} />
+        </section>
+      )}
+
+      {(props.needsUpgrade || upgraded) && (
+        <section>
+          {props.needsUpgrade && (
+            <button type="button" class="btn primary" disabled={upgrade.busy} onClick={runUpgrade}>
+              Upgrade data
+            </button>
+          )}
+          {upgraded && (
+            <p class="ok">Upgraded: {upgraded.members} members listed, {upgraded.bets} bets converted.</p>
+          )}
+          <Err error={upgrade.error} />
         </section>
       )}
 

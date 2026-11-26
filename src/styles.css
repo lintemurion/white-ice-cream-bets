@@ -293,6 +293,80 @@ label.inline {
   font-weight: 500;
 }
 
+/* People picker: chips for who's picked, a small + add menu for the rest. */
+.picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.picker-label { font-weight: 700; }
+
+.hint {
+  color: var(--fudge-soft);
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  min-height: 2.75rem;
+  padding: 0 0.2rem 0 0.85rem;
+  border: 2px solid var(--berry);
+  border-radius: 999px;
+  background: var(--berry-wash);
+  color: var(--fudge);
+  font-weight: 700;
+}
+
+.chip.fixed {
+  padding-right: 0.85rem;
+  border-color: var(--line);
+  background: var(--vanilla);
+}
+
+.chip-x {
+  min-width: 2.4rem;
+  min-height: 2.4rem;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--berry-deep);
+  font: 900 1.15rem/1 var(--font);
+  cursor: pointer;
+}
+
+.chip-x:active { background: #fff; }
+
+select.chip-add {
+  width: auto;
+  min-width: 6.5rem;
+  border-style: dashed;
+  border-radius: 999px;
+  color: var(--berry-deep);
+  font-weight: 700;
+}
+
+select.chip-add:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.about {
+  color: var(--fudge-soft);
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
 /* ---------- messages ---------- */
 
 .error {

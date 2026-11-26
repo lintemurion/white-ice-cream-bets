@@ -29,9 +29,11 @@ function rawPropose(db: Firestore, stake: string) {
   const b = writeBatch(db);
   b.set(ref, {
     description: 'Emoji bet',
-    sideA: 'ava',
-    sideB: 'jo',
-    subject: null,
+    sideA: ['ava'],
+    sideB: ['jo'],
+    subjects: [],
+    confirmed: ['ava'],
+    paidBy: [],
     stakeA: stake,
     stakeB: '$5',
     voteStyle: 'open',
@@ -70,7 +72,14 @@ describe('text limits: rules and cleanText share a unit (UTF-16 code units)', ()
 
   it('proposeBet accepts what the rules accept and refuses before writing what they refuse', async () => {
     const ava = dbAs(env, 'ava');
-    const input = { description: 'Emoji bet', opponent: 'jo', subject: null, stakeTheirs: '$5', voteStyle: 'open' as const };
+    const input = {
+      description: 'Emoji bet',
+      teammates: [],
+      opponents: ['jo'],
+      subjects: [],
+      stakeTheirs: '$5',
+      voteStyle: 'open' as const,
+    };
     await expect(proposeBet(ava, 'ava', { ...input, stakeMine: EMOJI.repeat(250) })).resolves.toBeTypeOf('string');
     await expect(proposeBet(ava, 'ava', { ...input, stakeMine: EMOJI.repeat(251) })).rejects.toThrow(/500/);
   });

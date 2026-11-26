@@ -2,20 +2,22 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { BetCard, type BetActions } from '../../src/ui/BetCard';
+import { errorMessage } from '../../src/ui/errorMessage';
 import { bet, names } from './fixtures';
 import type { BetDoc, Side } from '../../src/model/types';
 
 afterEach(cleanup);
 
 const makeActions = (): BetActions => ({
-  accept: vi.fn().mockResolvedValue(undefined),
-  decline: vi.fn().mockResolvedValue(undefined),
-  cancel: vi.fn().mockResolvedValue(undefined),
+  joinSide: vi.fn().mockResolvedValue(undefined),
+  switchSide: vi.fn().mockResolvedValue(undefined),
+  leave: vi.fn().mockResolvedValue(undefined),
+  confirmIn: vi.fn().mockResolvedValue(undefined),
   callIt: vi.fn().mockResolvedValue(undefined),
   castOpenVote: vi.fn().mockResolvedValue(undefined),
   castAnonVote: vi.fn().mockResolvedValue(undefined),
   trySettle: vi.fn().mockResolvedValue(null),
-  markPaid: vi.fn().mockResolvedValue(undefined),
+  markIGotPaid: vi.fn().mockResolvedValue(undefined),
 });
 
 function show(b: BetDoc, me: string, extra: { myVote?: Side | null; memberCount?: number; actions?: BetActions } = {}) {
@@ -26,25 +28,96 @@ function show(b: BetDoc, me: string, extra: { myVote?: Side | null; memberCount?
   return actions;
 }
 
-describe('BetCard', () => {
-  it('shows Accept and Decline only to side B on a proposed bet', () => {
-    show(bet({ status: 'proposed' }), 'jo');
-    expect(screen.getByRole('button', { name: 'Accept' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Decline' })).toBeTruthy();
+const MOVES = ["I'm in", 'Switch sides', 'Leave', /^Join /];
+const noMoves = () => {
+  for (const name of MOVES) expect(screen.queryByRole('button', { name })).toBeNull();
+};
+
+/** Ava (in) and Sam (not in) vs Jo (not in), about Maya. */
+const proposed = (over: Partial<BetDoc> = {}) =>
+  bet({ status: 'proposed', sideA: ['ava', 'sam'], sideB: ['jo'], subjects: ['maya'], confirmed: ['ava'], ...over });
+
+describe('BetCard: proposed', () => {
+  it("named, not in: shows I'm in, Switch sides, Leave and Waiting on", async () => {
+    const actions = show(proposed(), 'sam');
+    expect(screen.getByText('About: Maya')).toBeTruthy();
+    expect(screen.getByText('Ava & Sam vs Jo')).toBeTruthy();
+    expect(screen.getByText('Waiting on: Sam, Jo')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /^Join / })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: "I'm in" }));
+    await waitFor(() => expect(actions.confirmIn).toHaveBeenCalledWith('sam', 'b1'));
+    fireEvent.click(screen.getByRole('button', { name: 'Switch sides' }));
+    await waitFor(() => expect(actions.switchSide).toHaveBeenCalledWith('sam', 'b1'));
+    fireEvent.click(screen.getByRole('button', { name: 'Leave' }));
+    await waitFor(() => expect(actions.leave).toHaveBeenCalledWith('sam', 'b1'));
+  });
+
+  it("already in: Switch sides and Leave, no I'm in", () => {
+    show(proposed(), 'ava');
+    expect(screen.queryByRole('button', { name: "I'm in" })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Switch sides' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Leave' })).toBeTruthy();
+  });
+
+  it('bystander sees Join buttons; subjects see no Join buttons', async () => {
+    const actions = show(proposed({ sideB: [] }), 'kayla');
+    expect(screen.getByText('Ava & Sam vs (open challenge)')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: "Join Ava's side" }));
+    await waitFor(() => expect(actions.joinSide).toHaveBeenCalledWith('kayla', 'b1', 'A'));
+    fireEvent.click(screen.getByRole('button', { name: 'Join other side' }));
+    await waitFor(() => expect(actions.joinSide).toHaveBeenCalledWith('kayla', 'b1', 'B'));
+    expect(screen.queryByRole('button', { name: "I'm in" })).toBeNull();
     cleanup();
-    show(bet({ status: 'proposed' }), 'ava');
-    expect(screen.queryByRole('button', { name: 'Accept' })).toBeNull();
-    expect(screen.getByText('Waiting for Jo to accept')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy();
+
+    show(proposed(), 'kayla');
+    expect(screen.getByRole('button', { name: "Join Jo's side" })).toBeTruthy();
     cleanup();
-    show(bet({ status: 'proposed' }), 'sam');
-    expect(screen.queryByRole('button', { name: 'Accept' })).toBeNull();
+
+    show(proposed(), 'maya');
+    noMoves();
+  });
+
+  it('a bet with 8 people offers no Join buttons', () => {
+    show(proposed({ sideA: ['ava', 'sam', 'mac'], sideB: ['jo', 'kaden', 'x1'], subjects: ['maya', 'x2'] }), 'kayla');
+    noMoves();
+  });
+
+  it('the proposer gets no special buttons once she is off the bet', () => {
+    show(proposed({ createdBy: 'kayla', sideA: ['ava'], confirmed: ['ava'] }), 'kayla');
+    expect(screen.queryByRole('button', { name: "I'm in" })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Leave' })).toBeNull();
+    expect(screen.getByRole('button', { name: "Join Ava's side" })).toBeTruthy();
   });
 
   it('shows stakes and style tag on a proposal', () => {
-    show(bet({ status: 'proposed', voteStyle: 'anonymous' }), 'jo');
+    show(proposed({ voteStyle: 'anonymous' }), 'jo');
     expect(screen.getByText(/a ride to the mall vs a coffee/)).toBeTruthy();
     expect(screen.getByText('(anonymous)')).toBeTruthy();
+  });
+
+  it('no About line without subjects', () => {
+    show(proposed({ subjects: [] }), 'jo');
+    expect(screen.queryByText(/^About:/)).toBeNull();
+  });
+
+  it('a denied move shows a friendly line', async () => {
+    const actions = makeActions();
+    actions.confirmIn = vi.fn().mockRejectedValue(Object.assign(new Error('x'), { code: 'permission-denied' }));
+    show(proposed(), 'sam', { actions });
+    fireEvent.click(screen.getByRole('button', { name: "I'm in" }));
+    expect((await screen.findByRole('alert')).textContent).toBe("That didn't work. The bet may have changed; try again.");
+  });
+});
+
+describe('BetCard', () => {
+  it('no move buttons once active', () => {
+    for (const me of ['ava', 'jo', 'kayla']) {
+      show(bet({ status: 'active' }), me);
+      noMoves();
+      cleanup();
+    }
+    show(bet({ status: 'voting' }), 'kayla');
+    noMoves();
   });
 
   it('shows Call it on an active bet', () => {
@@ -53,22 +126,46 @@ describe('BetCard', () => {
     expect(actions.callIt).toHaveBeenCalledWith('b1');
   });
 
-  it('shows the owes line and Mark paid only to the winner on a settled bet', async () => {
-    const b = bet({ status: 'settled', winner: 'A' });
-    const actions = show(b, 'ava');
-    expect(screen.getByText('Jo owes Ava: a coffee')).toBeTruthy();
-    expect(screen.getByText('Ava beat Jo')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Mark paid' }));
-    await waitFor(() => expect(actions.markPaid).toHaveBeenCalledWith('b1'));
+  it("settled team bet shows 'Jo & Kayla owe Mac & Kaden: a pizza', I got paid, Paid: 1 of 2", async () => {
+    const b = bet({
+      status: 'settled',
+      winner: 'A',
+      sideA: ['mac', 'kaden'],
+      sideB: ['jo', 'kayla'],
+      stakeB: 'a pizza',
+      paidBy: ['kaden'],
+    });
+    const actions = show(b, 'mac');
+    expect(screen.getByText('Jo & Kayla owe Mac & Kaden: a pizza')).toBeTruthy();
+    expect(screen.getByText('Paid: 1 of 2')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'I got paid' }));
+    await waitFor(() => expect(actions.markIGotPaid).toHaveBeenCalledWith('mac', 'b1'));
     cleanup();
-    show(b, 'jo');
-    expect(screen.queryByRole('button', { name: 'Mark paid' })).toBeNull();
+    show(b, 'kaden'); // already marked
+    expect(screen.queryByRole('button', { name: 'I got paid' })).toBeNull();
+    cleanup();
+    show(b, 'jo'); // a loser
+    expect(screen.queryByRole('button', { name: 'I got paid' })).toBeNull();
   });
 
-  it('shows Paid on a paid bet without Mark paid', () => {
-    show(bet({ status: 'paid', winner: 'B' }), 'jo');
+  it('one-on-one settled bet: owes line, I got paid for the winner, no Paid count', () => {
+    show(bet({ status: 'settled', winner: 'A' }), 'ava');
+    expect(screen.getByText('Jo owes Ava: a coffee')).toBeTruthy();
+    expect(screen.getByText('Ava beat Jo')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'I got paid' })).toBeTruthy();
+    expect(screen.queryByText(/^Paid:/)).toBeNull();
+  });
+
+  it('shows Paid on a paid bet without I got paid', () => {
+    show(bet({ status: 'paid', winner: 'B', paidBy: ['jo'] }), 'jo');
     expect(screen.getByText('Paid')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Mark paid' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'I got paid' })).toBeNull();
+  });
+
+  it('team vote buttons read "<side names> won"', () => {
+    show(bet({ status: 'voting', sideA: ['ava', 'sam'], sideB: ['jo', 'maya', 'kayla'] }), 'mac');
+    expect(screen.getByRole('button', { name: 'Ava & Sam won' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Jo, Maya +1 won' })).toBeTruthy();
   });
 
   it('open voting shows dots, progress, and removes my vote when I tap my side again', async () => {
@@ -151,7 +248,7 @@ describe('BetCard', () => {
   });
 
   it('names a missing uid "Former member", never the raw uid', () => {
-    const b = bet({ status: 'settled', winner: 'A', sideB: 'gone-uid-123' });
+    const b = bet({ status: 'settled', winner: 'A', sideB: ['gone-uid-123'] });
     const { container } = render(<BetCard id="b1" bet={b} me="sam" names={{ ava: 'Ava' }} memberCount={4} actions={makeActions()} />);
     expect(screen.getByText('Ava beat Former member')).toBeTruthy();
     expect(screen.getByText('Former member owes Ava: a coffee')).toBeTruthy();
@@ -164,15 +261,18 @@ describe('BetCard', () => {
     expect(screen.getByText('Final count: Ava 4, Jo 1')).toBeTruthy();
   });
 
-  it('proposal reads "<creator> proposed:" with the quoted description and stakes', () => {
-    show(bet({ status: 'proposed', description: 'Snow before Dec 1' }), 'jo');
-    expect(screen.getByText('Ava proposed:')).toBeTruthy();
-    expect(screen.getByText('"Snow before Dec 1"')).toBeTruthy();
-  });
-
   it('voting card puts the description before the sides line', () => {
     const { container } = render(<BetCard id="b1" bet={bet({ status: 'voting' })} me="sam" names={names} memberCount={4} actions={makeActions()} />);
     const ps = Array.from(container.querySelectorAll('p')).map((p) => p.textContent ?? '');
     expect(ps.findIndex((t) => t.includes('Jo cannot do'))).toBeLessThan(ps.findIndex((t) => t.startsWith('Ava vs Jo')));
+  });
+});
+
+describe('errorMessage', () => {
+  it('keeps the Ask Kyle messages and plain validation text', () => {
+    expect(errorMessage(new Error('The group needs a quick upgrade. Ask Kyle.'))).toBe('The group needs a quick upgrade. Ask Kyle.');
+    expect(errorMessage(new Error('This bet needs the group upgrade first. Ask Kyle.'))).toBe(
+      'This bet needs the group upgrade first. Ask Kyle.',
+    );
   });
 });

@@ -28,3 +28,6 @@ export function cleanText(value: string, max: number, label: string): string {
   if (s.length > max) throw new Error(`${label} must be ${max} characters or fewer`);
   return s;
 }
+
+/** Shown when group/members has not been built yet (Upgrade data on the admin page). */
+export const NEEDS_MEMBER_LIST = 'The group needs a quick upgrade. Ask Kyle.';

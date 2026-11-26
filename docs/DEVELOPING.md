@@ -19,7 +19,7 @@ If a feature can't be made safe in the rules, the free plan has no server code t
 
 ```
 firestore.rules.src   security rules (source; __ADMIN_EMAIL__ is filled in at build time)
-src/model/            plain data types and pure logic (tallies, removal planning)
+src/model/            plain data types and pure logic (tallies, removal planning, bet.ts: the shared status logic for sides, activation, and paid)
 src/data/             every database write and live subscription, shaped to match the rules
 src/ui/               Preact screens; *Container.tsx files wire data to the prop-driven screens
 scripts/              rules build, bundle check, icons, Cloud Shell setup
@@ -39,7 +39,8 @@ tests/ui, tests/unit  screen and pure-logic tests (no emulator)
 | `joinRequests/{uid}/voters/{voter}` | who has voted | members, admin |
 | `joinRequests/{uid}/ballots/{voter}` | `choice` (yes, no) | that voter, admin |
 | `joinRequests/{uid}/tally/counts` | `yes`, `no` | members once decided or everyone voted, admin |
-| `bets/{id}` | the bet, its status, open-vote maps `votesA`/`votesB`, anonymous `voters`/`voterCount` | members, admin |
+| `group/members` | `uids`, a map of current member ids (lets the rules check who is a member in one lookup) | members, admin |
+| `bets/{id}` | the bet, its status, `sideA`/`sideB` (lists of uids, proposer first), `subjects`, `confirmed` (who said I'm in), `paidBy` (winners who got paid), open-vote maps `votesA`/`votesB`, anonymous `voters`/`voterCount` | members, admin |
 | `bets/{id}/ballots/{voter}` | anonymous `choice` (A, B) | that voter, admin |
 | `bets/{id}/tally/counts` | anonymous `A`, `B` | members once decided or everyone voted, admin |
 
@@ -48,6 +49,9 @@ tests/ui, tests/unit  screen and pure-logic tests (no emulator)
 - **Open bets:** a member adds their own uid to `votesA` or `votesB` on the bet. The rules allow only their own key to change.
 - **Anonymous bets and all join votes:** one batch writes the voter's private ballot, adds them to the "who voted" list, and moves the hidden count by exactly one. Each of those writes is checked against the others, so none can happen alone.
 - **Settling:** any member's app tries the "settle" write whenever a majority shows up. The rules allow it only if one side has strictly more than half of current members (`votes * 2 > memberCount`), reading the counts from before the write.
+- **Activation:** a proposed bet goes `active` when both sides have someone and `confirmed` holds everyone on both sides. It goes `void` if side A empties. Members may change only their own id in `sideA`, `sideB`, and `confirmed`, and only while the bet is `proposed`, so the sides lock once it is active. At most 8 people in total across both sides and `subjects`, with nobody in two lists.
+- **Paid:** on a settled bet, each winner adds their own id to `paidBy`. The bet becomes `paid` when the last winner does. The admin can mark a winner paid (for example, one who was removed).
+- **Status logic:** `src/model/bet.ts` holds the shared rules for sides, status, and paid, used by the data layer, the screens, and the admin code. Bets saved in the old format (a single id for each side) are read through `normalizeBet`, and the admin's **Upgrade data** converts them and writes `group/members`.
 - **Joining:** the same idea. Approval adds 1 to `memberCount` in the same batch, and the rules check the two go together.
 
 ### The admin

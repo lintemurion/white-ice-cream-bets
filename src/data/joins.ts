@@ -1,6 +1,6 @@
-import { doc, increment, runTransaction, serverTimestamp, writeBatch, type Firestore } from 'firebase/firestore';
+import { doc, getDoc, increment, runTransaction, serverTimestamp, writeBatch, type Firestore } from 'firebase/firestore';
 import type { Ballot, Uid } from '../model/types';
-import { attempt, cleanText } from './errors';
+import { attempt, cleanText, NEEDS_MEMBER_LIST } from './errors';
 
 export type JoinChoice = 'yes' | 'no';
 
@@ -49,9 +49,11 @@ export async function castJoinVote(db: Firestore, voter: Uid, applicant: Uid, ch
 }
 
 /**
- * Tries to decide a join request: the approve batch, then the reject batch. The rules allow
- * each only with a strict majority, so a denial means "not decided" (or already decided)
- * and this returns null. Any other error is rethrown.
+ * Tries to decide a join request: the approve batch (request, user, group/main, and her
+ * key in group/members), then the reject batch. The rules allow each only with a strict
+ * majority, so a denial means "not decided" (or already decided) and this returns null.
+ * If neither went through because group/members is missing (Upgrade data not run yet), the
+ * approve could never succeed, so this throws a message saying so. Any other error is rethrown.
  */
 export async function tryDecideJoin(db: Firestore, applicant: Uid): Promise<'approved' | 'rejected' | null> {
   const approved = await attempt(() => {
@@ -59,6 +61,7 @@ export async function tryDecideJoin(db: Firestore, applicant: Uid): Promise<'app
     b.update(doc(db, requestPath(applicant)), { status: 'approved' });
     b.update(doc(db, `users/${applicant}`), { status: 'member' });
     b.update(doc(db, 'group/main'), { memberCount: increment(1), lastAdmitted: applicant });
+    b.update(doc(db, 'group/members'), { [`uids.${applicant}`]: true });
     return b.commit();
   });
   if (approved) return 'approved';
@@ -69,5 +72,7 @@ export async function tryDecideJoin(db: Firestore, applicant: Uid): Promise<'app
     b.update(doc(db, `users/${applicant}`), { status: 'rejected' });
     return b.commit();
   });
-  return rejected ? 'rejected' : null;
+  if (rejected) return 'rejected';
+  if (!(await getDoc(doc(db, 'group/members'))).exists()) throw new Error(NEEDS_MEMBER_LIST);
+  return null;
 }

@@ -1,7 +1,7 @@
 import { useState } from 'preact/hooks';
 import { db } from '../firebase';
 import {
-  acceptBet, callIt, cancelBet, castAnonVote, castOpenVote, declineBet, markPaid, proposeBet, trySettle,
+  callIt, castAnonVote, castOpenVote, confirmIn, joinSide, leaveBet, markIGotPaid, proposeBet, switchSide, trySettle,
 } from '../data/bets';
 import { castJoinVote, tryDecideJoin } from '../data/joins';
 import {
@@ -17,14 +17,15 @@ import { sections, tallyReadable } from './sections';
 import { decideKey, settleKey, useBackgroundAttempt } from './autoSettle';
 
 const actions: BetActions = {
-  accept: (id) => acceptBet(db, id),
-  decline: (id) => declineBet(db, id),
-  cancel: (id) => cancelBet(db, id),
+  joinSide: (me, id, side) => joinSide(db, me, id, side),
+  switchSide: (me, id) => switchSide(db, me, id),
+  leave: (me, id) => leaveBet(db, me, id),
+  confirmIn: (me, id) => confirmIn(db, me, id),
   callIt: (id) => callIt(db, id),
   castOpenVote: (me, id, side) => castOpenVote(db, me, id, side),
   castAnonVote: (me, id, side) => castAnonVote(db, me, id, side),
   trySettle: (id) => trySettle(db, id),
-  markPaid: (id) => markPaid(db, id),
+  markIGotPaid: (me, id) => markIGotPaid(db, me, id),
 };
 
 function BetRow(props: { id: string; bet: BetDoc; me: Uid; names: Record<Uid, string>; memberCount: number }) {

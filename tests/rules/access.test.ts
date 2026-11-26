@@ -77,6 +77,16 @@ describe('base access rules', () => {
     await assertSucceeds(getDoc(doc(db, 'bets/b1/ballots/ava')));
   });
 
+  it('members and admin read group/members; pending and strangers cannot', async () => {
+    await assertSucceeds(getDoc(doc(dbAs(env, 'ava'), 'group/members')));
+    await assertSucceeds(getDoc(doc(dbAs(env, 'admin'), 'group/members')));
+    await assertFails(getDoc(doc(dbAs(env, 'riley'), 'group/members')));
+    await assertFails(getDoc(doc(dbAs(env, 'rex'), 'group/members')));
+    await assertFails(getDoc(doc(dbAs(env, 'fay'), 'group/members')));
+    await assertFails(getDoc(doc(dbAs(env, 'newbie'), 'group/members')));
+    await assertFails(getDoc(doc(dbAs(env, null), 'group/members')));
+  });
+
   it('pending user can read group/main', () =>
     assertSucceeds(getDoc(doc(dbAs(env, 'riley'), 'group/main'))));
 

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { RulesTestEnvironment } from '@firebase/rules-unit-testing';
-import { doc, getDoc, type Firestore } from 'firebase/firestore';
+import { deleteDoc, doc, getDoc, type Firestore } from 'firebase/firestore';
 import { castJoinVote, requestToJoin, tryDecideJoin } from '../../src/data/joins';
 import { dbAs, makeEnv, seed } from '../rules/helpers';
 
@@ -44,10 +44,28 @@ describe('joins data layer', () => {
     expect(await tryDecideJoin(as('sam'), 'riley')).toBe('approved');
 
     expect(await peek('group/main')).toEqual({ memberCount: 7, lastAdmitted: 'riley' });
+    expect(await peek('group/members')).toEqual({
+      uids: Object.fromEntries([...MEMBERS, 'riley'].map((u) => [u, true])),
+    });
     expect(await peek('users/riley')).toMatchObject({ status: 'member' });
     expect(await peek('joinRequests/riley')).toMatchObject({ status: 'approved', voterCount: 4 });
     // Already decided: a second attempt returns null quietly.
     expect(await tryDecideJoin(as('zoe'), 'riley')).toBeNull();
+  });
+
+  it('tryDecideJoin explains a missing member list instead of returning null', async () => {
+    await requestToJoin(as('riley'), 'riley', 'Riley');
+    await voteAll('riley', ['yes', 'yes', 'yes', 'yes']);
+    await env.withSecurityRulesDisabled((ctx) => deleteDoc(doc(ctx.firestore() as unknown as Firestore, 'group/members')));
+    await expect(tryDecideJoin(as('sam'), 'riley')).rejects.toThrow('The group needs a quick upgrade. Ask Kyle.');
+    expect(await peek('users/riley')).toMatchObject({ status: 'pending' });
+  });
+
+  it('tryDecideJoin still rejects while the member list is missing', async () => {
+    await requestToJoin(as('riley'), 'riley', 'Riley');
+    await voteAll('riley', ['no', 'no', 'no', 'no']);
+    await env.withSecurityRulesDisabled((ctx) => deleteDoc(doc(ctx.firestore() as unknown as Firestore, 'group/members')));
+    expect(await tryDecideJoin(as('ava'), 'riley')).toBe('rejected');
   });
 
   it('tryDecideJoin returns null with 3 yes of 6', async () => {

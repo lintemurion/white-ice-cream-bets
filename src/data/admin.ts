@@ -11,8 +11,20 @@ import {
   type Firestore,
   type Transaction,
 } from 'firebase/firestore';
-import { planRemoval, type RemovalInput, type Write } from '../model/removal';
-import type { Ballot, BetDoc, BetTally, GroupDoc, JoinRequestDoc, JoinTally, Side, Uid, UserDoc } from '../model/types';
+import { everyone, isOldFormat, MAX_PEOPLE, needsUpgrade, normalizeBet } from '../model/bet';
+import { DELETE, planRemoval, type RemovalInput, type Write } from '../model/removal';
+import type {
+  Ballot,
+  BetDoc,
+  BetTally,
+  GroupDoc,
+  JoinRequestDoc,
+  JoinTally,
+  MembersDoc,
+  Side,
+  Uid,
+  UserDoc,
+} from '../model/types';
 import { cleanText } from './errors';
 
 // The admin's writes are unconstrained by the rules (except that he can never vote), so
@@ -24,13 +36,16 @@ const DESCRIPTION_MAX = 2000;
 const STAKE_MAX = 500;
 
 const GROUP = 'group/main';
+const MEMBERS = 'group/members';
 
-/** Creates group/main with no members if it does not exist yet. */
+/** Creates group/main and group/members with no members, each only if it does not exist yet. */
 export async function initGroup(db: Firestore): Promise<void> {
   const ref = doc(db, GROUP);
+  const membersRef = doc(db, MEMBERS);
   await runTransaction(db, async (tx) => {
-    if ((await tx.get(ref)).exists()) return;
-    tx.set(ref, { memberCount: 0, lastAdmitted: null } satisfies GroupDoc);
+    const [group, members] = await Promise.all([tx.get(ref), tx.get(membersRef)]);
+    if (!group.exists()) tx.set(ref, { memberCount: 0, lastAdmitted: null } satisfies GroupDoc);
+    if (!members.exists()) tx.set(membersRef, { uids: {} } satisfies MembersDoc);
   });
 }
 
@@ -44,17 +59,21 @@ async function requireStatus(tx: Transaction, db: Firestore, uid: Uid, status: U
 
 /**
  * Admits a pending user directly, in the same shape as a member's approve batch: request
- * approved, user member, memberCount +1 and lastAdmitted. Founding members come in this way.
+ * approved, user member, memberCount +1 and lastAdmitted, and her key in group/members.
+ * Founding members come in this way. Refuses, writing nothing, if group/members is missing
+ * (Upgrade data hasn't run): a list holding only her would block everyone else's proposals.
  */
 export async function adminApprove(db: Firestore, uid: Uid): Promise<void> {
   await runTransaction(db, async (tx) => {
     await requireStatus(tx, db, uid, 'pending');
     const group = (await tx.get(doc(db, GROUP))).data() as GroupDoc | undefined;
     if (!group) throw new Error('group/main is missing; run initGroup first');
+    if (!(await tx.get(doc(db, MEMBERS))).exists()) throw new Error('Press Upgrade data first, then approve.');
     const req = await tx.get(doc(db, `joinRequests/${uid}`));
     if (req.exists()) tx.update(req.ref, { status: 'approved' });
     tx.update(doc(db, `users/${uid}`), { status: 'member' });
     tx.update(doc(db, GROUP), { memberCount: group.memberCount + 1, lastAdmitted: uid });
+    tx.set(doc(db, MEMBERS), { uids: { [uid]: true } }, { merge: true });
   });
 }
 
@@ -89,11 +108,16 @@ export async function clearRejection(db: Firestore, uid: Uid): Promise<void> {
   await b.commit();
 }
 
+/** A Write's data with the DELETE sentinel turned into deleteField(). */
+function fields(data: Record<string, unknown> = {}): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(data).map(([k, v]) => [k, v === DELETE ? deleteField() : v]));
+}
+
 function apply(tx: Transaction, db: Firestore, w: Write): void {
   const ref = doc(db, w.path);
   if (w.op === 'delete') tx.delete(ref);
-  else if (w.op === 'set') tx.set(ref, w.data ?? {});
-  else tx.update(ref, w.data ?? {});
+  else if (w.op === 'set') tx.set(ref, fields(w.data));
+  else tx.update(ref, fields(w.data));
 }
 
 /**
@@ -111,12 +135,14 @@ export async function removeMember(db: Firestore, uid: Uid): Promise<void> {
   await runTransaction(db, async (tx) => {
     await requireStatus(tx, db, uid, 'member');
     const group = (await tx.get(doc(db, GROUP))).data() as GroupDoc;
+    // Before Upgrade data there may be no member list; upgradeData rebuilds it from users.
+    const hasMembers = (await tx.get(doc(db, MEMBERS))).exists();
 
     const bets: RemovalInput['bets'] = [];
     for (const { id } of betList.docs) {
       const snap = await tx.get(doc(db, `bets/${id}`));
       if (!snap.exists()) continue;
-      const bet = snap.data() as BetDoc;
+      const bet = normalizeBet(snap.data());
       const entry: RemovalInput['bets'][number] = { id, bet };
       if (bet.voteStyle === 'anonymous' && bet.status === 'voting') {
         entry.tally = (await tx.get(doc(db, `bets/${id}/tally/counts`))).data() as BetTally | undefined;
@@ -136,38 +162,115 @@ export async function removeMember(db: Firestore, uid: Uid): Promise<void> {
       joins.push({ applicant, req: snap.data() as JoinRequestDoc, tally: tally ?? { yes: 0, no: 0 }, ballot, voted });
     }
 
-    for (const w of planRemoval({ uid, memberCount: group.memberCount, bets, joins })) apply(tx, db, w);
+    for (const w of planRemoval({ uid, memberCount: group.memberCount, bets, joins })) {
+      if (w.path === MEMBERS && !hasMembers) continue;
+      apply(tx, db, w);
+    }
   });
 }
 
-export type BetPatch = Partial<Pick<BetDoc, 'description' | 'stakeA' | 'stakeB' | 'subject' | 'voteStyle' | 'status' | 'winner'>>;
+export type BetPatch = Partial<Pick<BetDoc, 'description' | 'stakeA' | 'stakeB' | 'subjects'>>;
+
+const sameSet = (a: Uid[], b: Uid[]) => new Set(a).size === new Set(b).size && a.every((u) => b.includes(u));
 
 /**
- * Edits any bet. Text fields are trimmed and checked like the propose form. Switching to
- * anonymous creates the zero tally if there is none, so members can still vote on it.
+ * Edits a bet's description, stakes, or subjects. Text fields are trimmed and checked like
+ * the propose form. Changed subjects get the propose checks: no one twice, no one on a side,
+ * at most MAX_PEOPLE people in all, and anyone newly added a current member (in
+ * group/members). Subjects already on the bet are never re-checked for membership, so a
+ * removed member can stay the subject of a kept bet; unchanged subjects are not checked at all.
  */
 export async function adminEditBet(db: Firestore, betId: string, patch: BetPatch): Promise<void> {
-  const data: Record<string, unknown> = { ...patch };
+  const data: Record<string, unknown> = {};
   if (patch.description !== undefined) data.description = cleanText(patch.description, DESCRIPTION_MAX, 'Description');
   if (patch.stakeA !== undefined) data.stakeA = cleanText(patch.stakeA, STAKE_MAX, 'Stake A');
   if (patch.stakeB !== undefined) data.stakeB = cleanText(patch.stakeB, STAKE_MAX, 'Stake B');
+  if (patch.subjects !== undefined) data.subjects = patch.subjects;
   if (Object.keys(data).length === 0) return;
   const ref = doc(db, `bets/${betId}`);
-  const tallyRef = doc(db, `bets/${betId}/tally/counts`);
   await runTransaction(db, async (tx) => {
-    const tally = patch.voteStyle === 'anonymous' ? await tx.get(tallyRef) : null;
-    const bet = patch.subject ? ((await tx.get(ref)).data() as BetDoc | undefined) : undefined;
-    // A changed subject must be a current member and neither side. An unchanged one is never
-    // re-checked: a removed member can still be the subject of a kept bet.
-    if (patch.subject && patch.subject !== bet?.subject) {
-      if (!bet) throw new Error('Bet not found');
-      if (patch.subject === bet.sideA || patch.subject === bet.sideB) throw new Error('The subject cannot be a side of the bet');
-      const subject = (await tx.get(doc(db, `users/${patch.subject}`))).data() as UserDoc | undefined;
-      if (subject?.status !== 'member') throw new Error('The subject must be a current member');
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Bet not found');
+    const subjects = patch.subjects;
+    const bet = normalizeBet(snap.data());
+    if (subjects !== undefined && !sameSet(subjects, bet.subjects)) {
+      if (new Set(subjects).size !== subjects.length) throw new Error('A subject cannot be listed twice');
+      const sides = everyone(bet);
+      if (subjects.some((u) => sides.includes(u))) throw new Error('A subject cannot be on a side of the bet');
+      if (sides.length + subjects.length > MAX_PEOPLE) throw new Error(`A bet can have at most ${MAX_PEOPLE} people`);
+      const added = subjects.filter((u) => !bet.subjects.includes(u));
+      if (added.length > 0) {
+        const members = (await tx.get(doc(db, MEMBERS))).data() as MembersDoc | undefined;
+        if (added.some((u) => members?.uids[u] !== true)) throw new Error('A subject must be a current member');
+      }
     }
     tx.update(ref, data);
-    if (tally && !tally.exists()) tx.set(tallyRef, { A: 0, B: 0 } satisfies BetTally);
   });
+}
+
+/**
+ * Marks `winner` paid on a settled bet for her (say she was removed before marking it):
+ * she joins the end of paidBy, and the bet becomes paid once paidBy covers the whole winning
+ * side, compared as sets like the rules. Refuses anyone not on the winning side. Does
+ * nothing if she is already marked.
+ */
+export async function adminMarkPaidFor(db: Firestore, betId: string, winner: Uid): Promise<void> {
+  const ref = doc(db, `bets/${betId}`);
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Bet not found');
+    const bet = normalizeBet(snap.data());
+    if (bet.status !== 'settled' || (bet.winner !== 'A' && bet.winner !== 'B')) throw new Error('Only a settled bet can be marked paid');
+    const won = bet.winner === 'A' ? bet.sideA : bet.sideB;
+    if (!won.includes(winner)) throw new Error(`${winner} is not on the winning side`);
+    if (bet.paidBy.includes(winner)) return;
+    const paidBy = [...bet.paidBy, winner];
+    tx.update(ref, { paidBy, status: sameSet(paidBy, won) ? 'paid' : 'settled' });
+  });
+}
+
+/** Reads what needsUpgrade looks at: group/members, the users with status member, every bet. */
+async function readUpgradeState(db: Firestore) {
+  const [members, users, bets] = await Promise.all([
+    getDoc(doc(db, MEMBERS)),
+    getDocs(query(collection(db, 'users'), where('status', '==', 'member'))),
+    getDocs(collection(db, 'bets')),
+  ]);
+  return { members, memberUsers: users.docs.map((d) => d.id), bets: bets.docs };
+}
+
+/** Whether the admin page should offer Upgrade data. */
+export async function checkNeedsUpgrade(db: Firestore): Promise<boolean> {
+  const { members, memberUsers, bets } = await readUpgradeState(db);
+  return needsUpgrade({
+    membersDocExists: members.exists(),
+    listed: Object.keys((members.data() as MembersDoc | undefined)?.uids ?? {}),
+    memberUsers,
+    bets: bets.map((d) => d.data()),
+  });
+}
+
+/** Firestore's limit on writes in one batch. */
+const BATCH_MAX = 500;
+
+/**
+ * Upgrade data: overwrites group/members with exactly the users whose status is member (so
+ * a missing, emptied, or stale list is repaired), and rewrites every old-format bet in the
+ * new shape through normalizeBet, which drops `subject`. Safe to run again.
+ */
+export async function upgradeData(db: Firestore): Promise<{ members: number; bets: number }> {
+  const { memberUsers, bets } = await readUpgradeState(db);
+  const old = bets.filter((d) => isOldFormat(d.data()));
+  const writes: Array<(b: ReturnType<typeof writeBatch>) => void> = [
+    (b) => b.set(doc(db, MEMBERS), { uids: Object.fromEntries(memberUsers.map((u) => [u, true])) } satisfies MembersDoc),
+    ...old.map((d) => (b: ReturnType<typeof writeBatch>) => b.set(d.ref, normalizeBet(d.data()))),
+  ];
+  for (let i = 0; i < writes.length; i += BATCH_MAX) {
+    const b = writeBatch(db);
+    for (const w of writes.slice(i, i + BATCH_MAX)) w(b);
+    await b.commit();
+  }
+  return { members: memberUsers.length, bets: old.length };
 }
 
 /** Deletes any bet. An anonymous bet's tally and ballots go in the same batch. */
@@ -185,8 +288,9 @@ export async function adminDeleteBet(db: Firestore, betId: string): Promise<void
 }
 
 /**
- * Returns a settled or paid bet to voting with no winner and every vote cleared, so the
- * majority that settled it does not settle it again at once. Open: empty votesA and votesB.
+ * Returns a settled or paid bet to voting with no winner, nobody marked paid (so a re-settle
+ * can reach paid again), and every vote cleared, so the majority that settled it does not
+ * settle it again at once. Open: empty votesA and votesB.
  * Anonymous: every ballot deleted, tally zeroed, empty voters, voterCount 0. Ballots are
  * listed first; none can be added meanwhile, since a ballot needs the bet in voting.
  */
@@ -197,7 +301,7 @@ export async function adminReopenVote(db: Firestore, betId: string): Promise<voi
   await runTransaction(db, async (tx) => {
     const bet = (await tx.get(ref)).data() as BetDoc | undefined;
     if (bet?.status !== 'settled' && bet?.status !== 'paid') throw new Error('Only a settled or paid bet can be reopened');
-    tx.update(ref, { status: 'voting', winner: null, votesA: {}, votesB: {}, voters: {}, voterCount: 0 });
+    tx.update(ref, { status: 'voting', winner: null, paidBy: [], votesA: {}, votesB: {}, voters: {}, voterCount: 0 });
     if (bet.voteStyle === 'anonymous') {
       for (const d of ballots.docs) tx.delete(d.ref);
       tx.set(tallyRef, { A: 0, B: 0 } satisfies BetTally);

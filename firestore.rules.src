@@ -52,6 +52,15 @@ service cloud.firestore {
       return /databases/$(database)/documents/group/main;
     }
 
+    function membersPath() {
+      return /databases/$(database)/documents/group/members;
+    }
+
+    // Every current member's uid as a map key, so one lookup checks a whole list of people.
+    function memberUids() {
+      return get(membersPath()).data.uids;
+    }
+
     function joinPath(uid) {
       return /databases/$(database)/documents/joinRequests/$(uid);
     }
@@ -142,6 +151,27 @@ service cloud.firestore {
         && getAfter(userPath(request.resource.data.lastAdmitted)).data.status == 'member';
     }
 
+    // The member list: uids as keys, value true. Members may only add the uid admitted in
+    // this same batch (group/main's lastAdmitted, going pending -> member). The users rule
+    // in turn requires that key, so the list, memberCount, and statuses move together.
+    match /group/members {
+      allow read: if isAdmin() || isMember();
+      allow write: if isAdmin();
+      allow update: if isMember() && addingAdmitted();
+
+      function addingAdmitted() {
+        let x = getAfter(groupPath()).data.lastAdmitted;
+        let uids = request.resource.data.uids;
+        return onlyChanges(['uids'])
+          && x is string
+          && uids is map
+          && uids.diff(resource.data.uids).affectedKeys() == [x].toSet()
+          && uids[x] == true
+          && get(userPath(x)).data.status == 'pending'
+          && getAfter(userPath(x)).data.status == 'member';
+      }
+    }
+
     // ---------- Users ----------
 
     match /users/{uid} {
@@ -163,8 +193,9 @@ service cloud.firestore {
           && resource.data.status in ['pending', 'member']
           && onlyChanges(['displayName'])
           && validName(request.resource.data.displayName))
-        // Approve: pending -> member alongside the request going open -> approved and
-        // group/main gaining exactly one member, recorded as this uid.
+        // Approve: pending -> member alongside the request going open -> approved,
+        // group/main gaining exactly one member recorded as this uid, and this uid
+        // being added to group/members in this same batch.
         || (isMember()
           && onlyChanges(['status'])
           && resource.data.status == 'pending'
@@ -172,7 +203,9 @@ service cloud.firestore {
           && get(joinPath(uid)).data.status == 'open'
           && getAfter(joinPath(uid)).data.status == 'approved'
           && getAfter(groupPath()).data.memberCount == memberCount() + 1
-          && getAfter(groupPath()).data.lastAdmitted == uid)
+          && getAfter(groupPath()).data.lastAdmitted == uid
+          && !(uid in memberUids())
+          && uid in getAfter(membersPath()).data.uids)
         // Reject: pending -> rejected alongside the request going open -> rejected.
         || (isMember()
           && onlyChanges(['status'])
@@ -285,6 +318,46 @@ service cloud.firestore {
       return /databases/$(database)/documents/bets/$(betId)/ballots/$(v);
     }
 
+    // No one appears twice in list `l`.
+    function noDups(l) {
+      return l.toSet().size() == l.size();
+    }
+
+    // Lists `x` and `y` share no one.
+    function disjoint(x, y) {
+      return x.toSet().intersection(y.toSet()).size() == 0;
+    }
+
+    // The people on a bet: three duplicate-free, pairwise disjoint lists of at most 8 people.
+    function validLineup(a, b, s) {
+      return a is list && b is list && s is list
+        && noDups(a) && noDups(b) && noDups(s)
+        && disjoint(a, b) && disjoint(s, a) && disjoint(s, b)
+        && a.size() + b.size() + s.size() <= 8;
+    }
+
+    // `after` is `before` with only `me` added or removed (others keep their order).
+    function onlyMeChanged(before, after, me) {
+      return after is list && after.removeAll([me]) == before.removeAll([me]);
+    }
+
+    // Side `after` is side `before` after a move by `me`: unchanged if she stays on it or stays
+    // off it, `before` without her if she leaves it, and `before` with her at the end if she
+    // joins it. Nobody else's place changes, so the proposer stays first on side A.
+    function sideMoved(before, after, me) {
+      return after is list && (me in before
+        ? (me in after ? after == before : after == before.removeAll([me]))
+        : (me in after ? after == before.concat([me]) : after == before));
+    }
+
+    // The status a proposed bet must take after a member move (src/model/bet.ts nextStatus):
+    // void if side A is empty; active if both sides have people and all are confirmed.
+    function nextStatus(a, b, c) {
+      return a.size() == 0 ? 'void'
+        : (b.size() > 0 && c.hasAll(a.concat(b))) ? 'active'
+        : 'proposed';
+    }
+
     // An anonymous bet that is open for votes.
     function anonVoting(betId) {
       return get(betPath(betId)).data.voteStyle == 'anonymous'
@@ -301,20 +374,14 @@ service cloud.firestore {
       allow delete: if isAdmin()
         && (resource.data.voteStyle != 'anonymous' || !existsAfter(betTallyPath(betId)));
 
-      // Propose. Side A is the creator. Anonymous bets create their zero tally in this batch.
+      // Propose. The creator is on side A. Anonymous bets create their zero tally in this batch.
       allow create: if isMember() && proposing();
 
       // One named predicate per transition. The admin's mark paid is his blanket update.
+      // Members never delete bets: leaving as the last on side A voids the bet instead.
       allow update: if isMember()
-        && (accepting() || callingIt() || votingOpen() || settlingOpen()
+        && (moving() || callingIt() || votingOpen() || settlingOpen()
           || votingAnon() || settlingAnon() || markingPaid());
-
-      // Decline (side B) or cancel (side A) while proposed. An anonymous bet's tally goes
-      // in the same batch, so no orphan tally is left behind.
-      allow delete: if isMember()
-        && resource.data.status == 'proposed'
-        && (isSelf(resource.data.sideA) || isSelf(resource.data.sideB))
-        && (resource.data.voteStyle != 'anonymous' || !existsAfter(betTallyPath(betId)));
 
       function hasAdminVote() {
         let d = request.resource.data;
@@ -325,19 +392,17 @@ service cloud.firestore {
 
       function proposing() {
         let d = request.resource.data;
-        return hasExactly(['description', 'sideA', 'sideB', 'subject', 'stakeA', 'stakeB',
-            'voteStyle', 'status', 'winner', 'createdBy', 'createdAt',
+        return hasExactly(['description', 'sideA', 'sideB', 'subjects', 'confirmed', 'paidBy',
+            'stakeA', 'stakeB', 'voteStyle', 'status', 'winner', 'createdBy', 'createdAt',
             'votesA', 'votesB', 'voters', 'voterCount'])
-          && d.sideA == request.auth.uid
+          && validLineup(d.sideA, d.sideB, d.subjects)
+          && d.sideA.size() > 0
+          && d.sideA[0] == request.auth.uid
           && d.createdBy == request.auth.uid
-          && d.sideB is string
-          && d.sideB != d.sideA
-          && isMemberUid(d.sideB)
-          && (d.subject == null
-            || (d.subject is string
-              && d.subject != d.sideA
-              && d.subject != d.sideB
-              && isMemberUid(d.subject)))
+          && d.confirmed == [request.auth.uid]
+          && d.paidBy == []
+          // One read checks everyone named; a missing member list fails the propose.
+          && memberUids().keys().hasAll(d.sideA.concat(d.sideB).concat(d.subjects))
           && validText(d.description, 2000)
           && validText(d.stakeA, 500)
           && validText(d.stakeB, 500)
@@ -353,12 +418,32 @@ service cloud.firestore {
           && (d.voteStyle == 'open' || createdNow(betTallyPath(betId)));
       }
 
-      // Side B accepts: proposed -> active, nothing else changes.
-      function accepting() {
-        return isSelf(resource.data.sideB)
-          && onlyChanges(['status'])
-          && resource.data.status == 'proposed'
-          && request.resource.data.status == 'active';
+      // Join, switch, leave, or I'm in, while proposed. Each list changes only by the mover's
+      // own id, and a side she joins gains her at the end; joining or switching onto a side
+      // also marks her in; once in she stays in until she leaves (no un-confirming to stall a
+      // bet); subjects can't move; confirmed holds only people on a side; and status is set
+      // to what the new lineup demands (nextStatus), so the write that completes the bet
+      // makes it active and the write that empties side A voids it.
+      function moving() {
+        let me = request.auth.uid;
+        let o = resource.data;
+        let a = request.resource.data.sideA;
+        let b = request.resource.data.sideB;
+        let c = request.resource.data.confirmed;
+        return o.status == 'proposed'
+          && onlyChanges(['sideA', 'sideB', 'confirmed', 'status'])
+          && !(me in o.subjects)
+          && sideMoved(o.sideA, a, me)
+          && sideMoved(o.sideB, b, me)
+          && onlyMeChanged(o.confirmed, c, me)
+          && validLineup(a, b, o.subjects)
+          && noDups(c)
+          && a.concat(b).toSet().hasAll(c)
+          && (!(me in a) || me in o.sideA || me in c)
+          && (!(me in b) || me in o.sideB || me in c)
+          && (!(me in o.confirmed) || me in c || !(me in a.concat(b)))
+          && request.resource.data.status == nextStatus(a, b, c)
+          && me in memberUids();
       }
 
       // Any member calls it: active -> voting, nothing else changes.
@@ -427,13 +512,21 @@ service cloud.firestore {
             || (d.winner == 'B' && get(betTallyPath(betId)).data.B * 2 > memberCount()));
       }
 
-      // The winner marks it paid: settled -> paid, nothing else changes.
+      // A winner marks her own payment: paidBy gains exactly her id at the end, and status
+      // becomes paid on the write that covers the whole winning side (else stays settled).
+      // No lookups beyond isMember.
       function markingPaid() {
-        return onlyChanges(['status'])
-          && resource.data.status == 'settled'
-          && request.resource.data.status == 'paid'
-          && ((resource.data.winner == 'A' && isSelf(resource.data.sideA))
-            || (resource.data.winner == 'B' && isSelf(resource.data.sideB)));
+        let me = request.auth.uid;
+        let o = resource.data;
+        let p = request.resource.data.paidBy;
+        let won = o.winner == 'A' ? o.sideA : o.sideB;
+        return o.status == 'settled'
+          && o.winner in ['A', 'B']
+          && onlyChanges(['paidBy', 'status'])
+          && me in won
+          && !(me in o.paidBy)
+          && p == o.paidBy.concat([me])
+          && request.resource.data.status == (p.toSet() == won.toSet() ? 'paid' : 'settled');
       }
 
       // One ballot per member, id = her uid. Only she (and the admin) can read it.
@@ -477,12 +570,6 @@ service cloud.firestore {
           && createdNow(betPath(betId))
           && getAfter(betPath(betId)).data.voteStyle == 'anonymous'
           && getAfter(betPath(betId)).data.status == 'proposed';
-
-        // Decline or cancel, anonymous: deleted only alongside its proposed bet, by a side.
-        allow delete: if isMember()
-          && !existsAfter(betPath(betId))
-          && get(betPath(betId)).data.status == 'proposed'
-          && (isSelf(get(betPath(betId)).data.sideA) || isSelf(get(betPath(betId)).data.sideB));
       }
     }
 
